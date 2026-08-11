@@ -7,14 +7,21 @@ struct PigeonApp: App {
     @ObservedObject private var ghostty = Ghostty.App.shared
 
     var body: some Scene {
-        WindowGroup("Pigeon") {
+        Window("Pigeon", id: "main") {
             TerminalView()
                 .environmentObject(ghostty)
         }
+        .windowStyle(.hiddenTitleBar)
         .commands {
-            // Terminal apps want cmd+key combos to reach the surface, not
-            // default SwiftUI menu items like "New" that we don't support yet.
-            CommandGroup(replacing: .newItem) {}
+            CommandGroup(replacing: .newItem) {
+                // Fallback for when no surface has focus; with a focused
+                // surface cmd+T is consumed by ghostty's own keybinding
+                // and arrives via GHOSTTY_ACTION_NEW_TAB instead.
+                Button("New Tab") {
+                    NotificationCenter.default.post(name: .pigeonNewTab, object: nil)
+                }
+                .keyboardShortcut("t", modifiers: .command)
+            }
         }
     }
 }

@@ -1,0 +1,67 @@
+#!/bin/zsh
+# Drive a running Pigeon instance through its debug driver server.
+#
+#   scripts/pigeonctl launch            # build products path, starts with driver on
+#   scripts/pigeonctl state             # tab list + window info (JSON)
+#   scripts/pigeonctl new-tab
+#   scripts/pigeonctl select <tab-id>
+#   scripts/pigeonctl close <tab-id>
+#   scripts/pigeonctl type 'ls -la'     # types text (no newline)
+#   scripts/pigeonctl run 'ls -la'      # types text + enter
+#   scripts/pigeonctl text              # dump selected tab's screen text
+#   scripts/pigeonctl screenshot out.png
+#   scripts/pigeonctl quit
+set -e
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+PORT="${PIGEON_DRIVER_PORT:-8790}"
+BASE="http://127.0.0.1:$PORT"
+APP="$ROOT/build/Build/Products/Debug/Pigeon.app"
+
+case "$1" in
+  launch)
+    if pgrep -x Pigeon >/dev/null; then
+      echo "Pigeon already running (pkill -x Pigeon to stop)" >&2
+      exit 1
+    fi
+    # Must go through LaunchServices (open): a directly exec'd binary from
+    # a background shell comes up headless (no window server session for
+    # SwiftUI scenes). Env passes via launchd, cleared once the driver is up.
+    launchctl setenv PIGEON_DRIVER_PORT "$PORT"
+    open "$APP"
+    for _ in {1..50}; do
+      if curl -sf "$BASE/state" >/dev/null 2>&1; then
+        launchctl unsetenv PIGEON_DRIVER_PORT
+        echo "ready on $BASE"
+        exit 0
+      fi
+      sleep 0.2
+    done
+    launchctl unsetenv PIGEON_DRIVER_PORT
+    echo "driver did not come up on $BASE" >&2
+    exit 1
+    ;;
+  state)      curl -sf "$BASE/state" ;;
+  new-tab)    curl -sf -X POST "$BASE/tabs/new" ;;
+  select)     curl -sf -X POST --data "{\"id\":\"$2\"}" "$BASE/tabs/select" ;;
+  close)      curl -sf -X POST --data "{\"id\":\"$2\"}" "$BASE/tabs/close" ;;
+  type)       printf '%s' "$2" | curl -sf -X POST --data-binary @- "$BASE/input/text" ;;
+  key)        curl -sf -X POST --data "{\"key\":\"$2\"}" "$BASE/input/key" ;;
+  run)
+    printf '%s' "$2" | curl -sf -X POST --data-binary @- "$BASE/input/text" >/dev/null
+    curl -sf -X POST --data '{"key":"enter"}' "$BASE/input/key"
+    ;;
+  text)       curl -sf "$BASE/text" ;;
+  screenshot)
+    out="${2:-pigeon.png}"
+    win=$(curl -sf "$BASE/state" | /usr/bin/python3 -c 'import json,sys; print(json.load(sys.stdin)["windowNumber"])')
+    screencapture -x -o -l "$win" "$out"
+    echo "$out"
+    ;;
+  quit)       pkill -x Pigeon ;;
+  *)
+    sed -n '2,15p' "$0" >&2
+    exit 1
+    ;;
+esac
+echo ""

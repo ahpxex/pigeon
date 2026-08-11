@@ -6,14 +6,17 @@ Pigeon 是一个 macOS 原生终端模拟器：SwiftUI 外壳 + libghostty（Gho
 
 ```
 Sources/Pigeon/
-├── PigeonApp.swift          # @main SwiftUI App
-├── AppDelegate.swift        # 生命周期（退出时 shutdown libghostty）
-├── TerminalView.swift       # SwiftUI 根视图 + NSViewRepresentable 桥接
+├── PigeonApp.swift          # @main SwiftUI App（Window scene，hiddenTitleBar）
+├── AppDelegate.swift        # 生命周期、激活策略、启动 DriverServer
+├── TerminalView.swift       # 工作区：自绘垂直 Tab 侧边栏 + 多 surface 保活切换
+├── TabModel.swift           # TerminalTab / TabManager（tab 生命周期与选中态）
 ├── Info.plist
-└── Ghostty/                 # libghostty 封装层（唯一允许 import GhosttyKit 的地方之外不要扩散）
+├── Automation/
+│   └── DriverServer.swift   # 调试驱动服务（localhost HTTP，PIGEON_DRIVER_PORT 开启）
+└── Ghostty/                 # libghostty 封装层（不要把 C API 扩散到这层之外）
     ├── Ghostty.swift        # 命名空间、ghostty_init、修饰键转换、NSEvent → key event
-    ├── GhosttyApp.swift     # ghostty_app_t 生命周期、runtime 回调（wakeup/action/clipboard）
-    └── SurfaceView.swift    # NSView：surface 创建、键盘（含 NSTextInputClient/IME）、鼠标、resize、focus
+    ├── GhosttyApp.swift     # ghostty_app_t 生命周期、runtime 回调、配置色读取
+    └── SurfaceView.swift    # NSView：surface、键盘（含 IME）、鼠标、resize、focus、文本注入/读回
 
 vendor/                      # 全部 gitignore，由 scripts/setup.sh 重建
 ├── ghostty/                 # Ghostty 源码，固定 tag v1.2.3
@@ -29,6 +32,9 @@ vendor/                      # 全部 gitignore，由 scripts/setup.sh 重建
 - **回调 userdata 约定**：app 级回调的 userdata 是 `Ghostty.App`，surface 级回调（clipboard、close_surface）的 userdata 是 `SurfaceView`。从 `ghostty_surface_t` 反查视图用 `ghostty_surface_userdata`。
 - **键盘**：keyDown 先过 `interpretKeyEvents`（走 IME），把产生的文本挂到 key event 的 `text` 字段再交给 `ghostty_surface_key`；cmd 组合键走 `performKeyEquivalent`，先用 `ghostty_surface_key_is_binding` 探测，不是 binding 就放行给菜单。
 - **配置**：直接复用 Ghostty 的配置文件（`~/.config/ghostty/config`），`ghostty_config_load_default_files`。
+- **窗口配色**：hiddenTitleBar + 全窗口铺 `ghostty_config_get("background")` 读出的终端背景色；侧边栏是前景色 6% 透明度的浮层。刻意不用 NavigationSplitView（它的毛玻璃透出的是桌面，和终端色对不上）。
+- **Tabs**：`TabManager.shared` 持有 tab 列表；每个 tab 的 SurfaceView 常驻视图树（ZStack + opacity 切换），shell 进程不因切走而中断。ghostty 键位（cmd+T/W、cmd+1-9、cmd+shift+[]）通过 action 回调 → NotificationCenter（`.pigeonNewTab` 等）→ TabManager。close_surface（进程退出）同样走关 tab 路径，最后一个 tab 关掉时关窗口。
+- **文本注入有两条通道**：`ghostty_surface_text` 走粘贴路径（bracketed paste，控制字符不会被执行！），`ghostty_surface_key` 走按键编码路径。模拟"按回车"必须用后者 —— DriverServer 的 /input/text vs /input/key 就是这两条。
 - **资源**：app bundle 的 `Contents/Resources/{ghostty,terminfo}` 由 Xcode post-build 脚本从 `vendor/ghostty/zig-out/share/` rsync 过来，libghostty 按 Ghostty.app 的相对布局自动找到（TERM=xterm-ghostty 的 terminfo、shell integration 都在里面）。
 
 ## 构建
@@ -51,18 +57,40 @@ open build/Build/Products/Debug/Pigeon.app   # 或从 Xcode 跑
 - 链接需要 `-lstdc++`（libghostty-fat.a 里静态包了 harfbuzz 等 C++ 依赖），已写在 project.yml。
 - App 不能开沙盒（终端要以用户权限起 shell），和 Ghostty/iTerm2 一样。
 
+## 自动化测试（驱动服务）
+
+**改 UI/交互后必须用驱动服务自测**，不要靠 AppleScript 或肉眼。app 内置一个 localhost HTTP 驱动（`Automation/DriverServer.swift`），设了 `PIGEON_DRIVER_PORT` 才启动，只绑 127.0.0.1。`scripts/pigeonctl` 是包装：
+
+```sh
+scripts/pigeonctl launch          # 启动（走 LaunchServices + launchctl setenv 传端口）
+scripts/pigeonctl state           # tab 列表 + windowNumber（JSON）
+scripts/pigeonctl new-tab / select <id> / close <id>
+scripts/pigeonctl run 'echo hi'   # 输入命令并回车
+scripts/pigeonctl key enter|escape|tab|up|down|ctrl-c|...
+scripts/pigeonctl text            # 读回整屏文本 —— 断言用这个
+scripts/pigeonctl screenshot x.png# 用 state 里的 windowNumber 精确截窗口
+scripts/pigeonctl quit
+```
+
+典型断言流：`run 'echo marker-$((6*7))'` → sleep → `text | grep marker-42`。截图看视觉，text 做断言。注意：
+
+- **必须用 pigeonctl launch 启动**。从后台 shell 直接 exec 二进制会得到无头进程（SwiftUI 场景不实例化、NSApp.windows 为空），这不是 bug 是 macOS 行为。
+- 新建 tab 后要等 shell 出 prompt 再 `run`（约 0.5-1s），否则输入会混进启动 banner。
+- 所有驱动请求在主线程处理，直接调 TabManager / SurfaceView，与真实交互同路径（但绕过了 AppKit 事件层 —— 键盘快捷键类问题驱动测不到，要单独想办法）。
+
 ## 当前状态与路线图
 
-已实现（v0 脚手架）：单窗口单 surface、shell 可跑、键盘（含基本 IME preedit）、鼠标（点击/拖拽/滚轮/momentum）、剪贴板、标题（OSC 0/2）、光标形状、bell、URL 打开、Ghostty 配置加载。
+已实现：垂直 Tab 侧边栏（多 tab、切换保活、关闭、cmd+T/W、cmd+1-9 走 ghostty 键位）、窗口配色与终端主题统一（hiddenTitleBar 全铺背景色）、驱动服务与 pigeonctl、键盘（含基本 IME preedit）、鼠标、剪贴板、标题、光标形状、bell、URL 打开、Ghostty 配置加载。
 
 已知简化（做功能时优先补这些）：
 - 剪贴板读取确认（OSC 52）目前直接放行，没有像 Ghostty 那样弹确认框
-- close_surface 没有"进程还活着"的确认对话框
+- close_surface 没有"进程还活着"的确认对话框；tab 关闭即杀 shell
 - IME 候选框定位实现了，但 preedit 文本没有渲染到终端里（composing 状态只是不发 key）
 - `GHOSTTY_ACTION_INITIAL_SIZE` / `CELL_SIZE` 被忽略，窗口不会按行列数吸附
-- 无 tab、无 split、无多窗口管理、无设置界面
+- 侧边栏不可折叠、宽度固定 220、不能拖拽排序 tab
+- 无 split、无多窗口管理、无设置界面；配置热重载未接（改 ghostty config 要重启）
 
-路线图（用户随时会调整）：tabs → splits → 窗口/外观打磨（毛玻璃、自定义标题栏）→ 设置界面 → 主题。
+路线图（用户随时会调整）：侧边栏打磨（折叠/拖拽排序）→ splits → 设置界面 → 多窗口 → 主题。
 
 ## 约定
 

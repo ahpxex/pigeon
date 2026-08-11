@@ -1,6 +1,17 @@
 import AppKit
 import Combine
 import GhosttyKit
+import SwiftUI
+
+extension Notification.Name {
+    /// Request a new tab. Object is the originating SurfaceView (may be nil).
+    static let pigeonNewTab = Notification.Name("pigeonNewTab")
+    /// Request closing the tab that owns the SurfaceView in object.
+    static let pigeonCloseTab = Notification.Name("pigeonCloseTab")
+    /// Switch tabs. Object is the originating SurfaceView, userInfo["goto"]
+    /// is a ghostty_action_goto_tab_e raw value.
+    static let pigeonGotoTab = Notification.Name("pigeonGotoTab")
+}
 
 extension Ghostty {
     /// Owns the libghostty app instance: configuration, the runtime
@@ -77,6 +88,33 @@ extension Ghostty {
                 object: nil)
 
             readiness = .ready
+        }
+
+        /// The configured terminal background color. Drives the window
+        /// chrome so the whole window reads as one surface.
+        var backgroundColor: Color {
+            var color = ghostty_config_color_s()
+            let key = "background"
+            guard let config,
+                  ghostty_config_get(config, &color, key, UInt(key.count))
+            else { return Color(nsColor: .windowBackgroundColor) }
+            return Color(
+                red: Double(color.r) / 255,
+                green: Double(color.g) / 255,
+                blue: Double(color.b) / 255)
+        }
+
+        /// The configured foreground color, for chrome text.
+        var foregroundColor: Color {
+            var color = ghostty_config_color_s()
+            let key = "foreground"
+            guard let config,
+                  ghostty_config_get(config, &color, key, UInt(key.count))
+            else { return Color(nsColor: .textColor) }
+            return Color(
+                red: Double(color.r) / 255,
+                green: Double(color.g) / 255,
+                blue: Double(color.b) / 255)
         }
 
         /// Process pending libghostty work. Scheduled from the wakeup
@@ -175,7 +213,38 @@ extension Ghostty {
                 // manages the window frame.
                 return true
 
-            case GHOSTTY_ACTION_CLOSE_WINDOW, GHOSTTY_ACTION_CLOSE_TAB:
+            case GHOSTTY_ACTION_NEW_TAB:
+                let view: SurfaceView? = target.tag == GHOSTTY_TARGET_SURFACE
+                    ? surfaceView(of: target.target.surface)
+                    : nil
+                DispatchQueue.main.async {
+                    NotificationCenter.default.post(name: .pigeonNewTab, object: view)
+                }
+                return true
+
+            case GHOSTTY_ACTION_CLOSE_TAB:
+                guard target.tag == GHOSTTY_TARGET_SURFACE,
+                      let view = surfaceView(of: target.target.surface)
+                else { return false }
+                DispatchQueue.main.async {
+                    NotificationCenter.default.post(name: .pigeonCloseTab, object: view)
+                }
+                return true
+
+            case GHOSTTY_ACTION_GOTO_TAB:
+                guard target.tag == GHOSTTY_TARGET_SURFACE,
+                      let view = surfaceView(of: target.target.surface)
+                else { return false }
+                let goto = action.action.goto_tab
+                DispatchQueue.main.async {
+                    NotificationCenter.default.post(
+                        name: .pigeonGotoTab,
+                        object: view,
+                        userInfo: ["goto": goto.rawValue])
+                }
+                return true
+
+            case GHOSTTY_ACTION_CLOSE_WINDOW:
                 guard target.tag == GHOSTTY_TARGET_SURFACE,
                       let view = surfaceView(of: target.target.surface)
                 else { return false }
@@ -241,7 +310,9 @@ extension Ghostty {
         ) {
             guard let view = surfaceView(userdata) else { return }
             // TODO: confirm before closing when processAlive is true.
-            DispatchQueue.main.async { view.window?.close() }
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: .pigeonCloseTab, object: view)
+            }
         }
     }
 }

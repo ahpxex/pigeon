@@ -52,6 +52,70 @@ extension Ghostty {
             if let surface { ghostty_surface_free(surface) }
         }
 
+        // MARK: Programmatic access (driver / tests)
+
+        /// Send raw text to the pty as if typed. Control characters pass
+        /// through (e.g. "\u{03}" for ctrl-c, "\r" for enter).
+        func sendText(_ text: String) {
+            guard let surface else { return }
+            text.withCString { cString in
+                ghostty_surface_text(surface, cString, UInt(strlen(cString)))
+            }
+        }
+
+        /// Synthesize a key press+release, bypassing AppKit. Used by the
+        /// driver server. Note sendText() goes through the paste path, so
+        /// keys like enter must come through here to be encoded as input.
+        func sendKey(
+            keyCode: UInt32,
+            text: String?,
+            unshiftedCodepoint: UInt32 = 0,
+            mods: ghostty_input_mods_e = GHOSTTY_MODS_NONE
+        ) {
+            guard let surface else { return }
+            var key = ghostty_input_key_s()
+            key.keycode = keyCode
+            key.mods = mods
+            key.consumed_mods = GHOSTTY_MODS_NONE
+            key.unshifted_codepoint = unshiftedCodepoint
+            key.composing = false
+
+            key.action = GHOSTTY_ACTION_PRESS
+            if let text {
+                text.withCString { cString in
+                    key.text = cString
+                    _ = ghostty_surface_key(surface, key)
+                }
+            } else {
+                key.text = nil
+                _ = ghostty_surface_key(surface, key)
+            }
+
+            key.action = GHOSTTY_ACTION_RELEASE
+            key.text = nil
+            _ = ghostty_surface_key(surface, key)
+        }
+
+        /// The full screen contents (scrollback + viewport) as plain text.
+        func screenText() -> String {
+            guard let surface else { return "" }
+            var text = ghostty_text_s()
+            let selection = ghostty_selection_s(
+                top_left: ghostty_point_s(
+                    tag: GHOSTTY_POINT_SCREEN,
+                    coord: GHOSTTY_POINT_COORD_TOP_LEFT,
+                    x: 0, y: 0),
+                bottom_right: ghostty_point_s(
+                    tag: GHOSTTY_POINT_SCREEN,
+                    coord: GHOSTTY_POINT_COORD_BOTTOM_RIGHT,
+                    x: 0, y: 0),
+                rectangle: false)
+            guard ghostty_surface_read_text(surface, selection, &text) else { return "" }
+            defer { ghostty_surface_free_text(surface, &text) }
+            guard let ptr = text.text else { return "" }
+            return String(cString: ptr)
+        }
+
         // MARK: Window lifecycle
 
         override func viewDidMoveToWindow() {
