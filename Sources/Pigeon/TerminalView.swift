@@ -48,6 +48,9 @@ private struct TerminalWorkspace: View {
                     .allowsHitTesting(tab.id == tabManager.selectedTabID)
                 }
             }
+            // Breathing room between the text grid and the window edges;
+            // the padding shows the same background so it stays seamless.
+            .padding(EdgeInsets(top: 14, leading: 10, bottom: 10, trailing: 12))
             .frame(minWidth: 200, maxWidth: .infinity, minHeight: 100, maxHeight: .infinity)
         }
         .background(ghostty.backgroundColor)
