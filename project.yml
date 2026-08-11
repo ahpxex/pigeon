@@ -1,0 +1,59 @@
+name: Pigeon
+options:
+  bundleIdPrefix: dev.ahpx
+  deploymentTarget:
+    macOS: "13.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MACOSX_DEPLOYMENT_TARGET: "13.0"
+
+targets:
+  Pigeon:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/Pigeon
+    dependencies:
+      # libghostty, built from vendor/ghostty by scripts/build-ghostty.sh.
+      # Static library xcframework, so no embedding.
+      - framework: vendor/ghostty/macos/GhosttyKit.xcframework
+        embed: false
+    info:
+      path: Sources/Pigeon/Info.plist
+      properties:
+        CFBundleDisplayName: Pigeon
+        CFBundleName: Pigeon
+        LSApplicationCategoryType: public.app-category.developer-tools
+        NSHighResolutionCapable: true
+        NSPrincipalClass: NSApplication
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.ahpx.pigeon
+        # libghostty statically links C++ dependencies (harfbuzz, etc.)
+        OTHER_LDFLAGS: "-lstdc++"
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_HARDENED_RUNTIME: false
+        # A terminal cannot be sandboxed: it must spawn shells with full
+        # user privileges (same as Ghostty, iTerm2, Terminal.app).
+        ENABLE_APP_SANDBOX: false
+    postBuildScripts:
+      # libghostty locates its runtime resources (terminfo, shell
+      # integration) at Contents/Resources/{ghostty,terminfo} relative to
+      # the app bundle, same layout as Ghostty.app.
+      - name: Copy Ghostty resources
+        basedOnDependencyAnalysis: false
+        script: |
+          set -e
+          SHARE="$SRCROOT/vendor/ghostty/zig-out/share"
+          RES="$BUILT_PRODUCTS_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH"
+          if [ ! -d "$SHARE/ghostty" ]; then
+            echo "error: vendor/ghostty/zig-out/share/ghostty not found. Run scripts/build-ghostty.sh first." >&2
+            exit 1
+          fi
+          mkdir -p "$RES"
+          rsync -a --delete "$SHARE/ghostty/" "$RES/ghostty/"
+          rsync -a --delete "$SHARE/terminfo/" "$RES/terminfo/"

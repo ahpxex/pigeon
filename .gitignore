@@ -1,0 +1,12 @@
+# Xcode
+Pigeon.xcodeproj/
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+
+# Vendored build dependencies (recreated by scripts/setup.sh)
+vendor/
+
+# macOS
+.DS_Store
