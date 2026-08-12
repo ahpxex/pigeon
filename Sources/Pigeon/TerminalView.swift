@@ -33,11 +33,16 @@ struct TerminalView: View {
 private struct TerminalWorkspace: View {
     @EnvironmentObject private var ghostty: Ghostty.App
     @ObservedObject private var tabManager = TabManager.shared
+    @ObservedObject private var workspace = WorkspaceState.shared
 
     var body: some View {
         HStack(spacing: 0) {
-            TabSidebar()
-                .frame(width: 220)
+            if !workspace.sidebarCollapsed {
+                TabSidebar()
+                    .frame(width: workspace.sidebarWidth)
+                    .overlay(alignment: .trailing) { SidebarResizeHandle() }
+                    .transition(.move(edge: .leading))
+            }
 
             ZStack {
                 ForEach(tabManager.tabs) { tab in
@@ -50,12 +55,76 @@ private struct TerminalWorkspace: View {
             }
             // Breathing room between the text grid and the window edges;
             // the padding shows the same background so it stays seamless.
-            .padding(EdgeInsets(top: 14, leading: 10, bottom: 10, trailing: 12))
+            // With the sidebar collapsed the traffic lights float over the
+            // terminal, so push the first line below them.
+            .padding(EdgeInsets(
+                top: workspace.sidebarCollapsed ? 40 : 14,
+                leading: workspace.sidebarCollapsed ? 12 : 10,
+                bottom: 10,
+                trailing: 12))
             .frame(minWidth: 200, maxWidth: .infinity, minHeight: 100, maxHeight: .infinity)
+        }
+        .overlay(alignment: .topLeading) {
+            if workspace.sidebarCollapsed {
+                Button {
+                    withAnimation(.easeOut(duration: 0.15)) {
+                        workspace.toggleSidebar()
+                    }
+                } label: {
+                    Image(systemName: "sidebar.left")
+                        .font(.system(size: 13))
+                        .padding(6)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(ghostty.foregroundColor.opacity(0.5))
+                // Clear of the traffic lights on the left.
+                .padding(.leading, 82)
+                .padding(.top, 6)
+                .accessibilityIdentifier("expandSidebarButton")
+            }
         }
         .background(ghostty.backgroundColor)
         .ignoresSafeArea()
-        .frame(minWidth: 600, minHeight: 400)
+        .frame(minWidth: 400, minHeight: 300)
+    }
+}
+
+/// Invisible drag strip on the sidebar's trailing edge.
+private struct SidebarResizeHandle: View {
+    @ObservedObject private var workspace = WorkspaceState.shared
+    @State private var dragStartWidth: Double? = nil
+
+    var body: some View {
+        Color.clear
+            .frame(width: 8)
+            .contentShape(Rectangle())
+            .onHover { inside in
+                if inside {
+                    NSCursor.resizeLeftRight.push()
+                } else {
+                    NSCursor.pop()
+                }
+            }
+            .gesture(
+                DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                    .onChanged { value in
+                        if dragStartWidth == nil {
+                            dragStartWidth = workspace.sidebarWidth
+                        }
+                        let proposed = (dragStartWidth ?? 0) + value.translation.width
+                        workspace.sidebarWidth = WorkspaceState.clampWidth(proposed)
+                    }
+                    .onEnded { value in
+                        let proposed = (dragStartWidth ?? 0) + value.translation.width
+                        dragStartWidth = nil
+                        if proposed < WorkspaceState.collapseThreshold {
+                            withAnimation(.easeOut(duration: 0.15)) {
+                                workspace.sidebarCollapsed = true
+                            }
+                        }
+                    }
+            )
     }
 }
 
@@ -84,20 +153,36 @@ private struct TabSidebar: View {
 
             Spacer(minLength: 0)
 
-            Button {
-                tabManager.newTab()
-            } label: {
-                Label("New Tab", systemImage: "plus")
-                    .font(.system(size: 12))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .contentShape(Rectangle())
+            HStack(spacing: 0) {
+                Button {
+                    tabManager.newTab()
+                } label: {
+                    Label("New Tab", systemImage: "plus")
+                        .font(.system(size: 12))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("newTabButton")
+
+                Button {
+                    withAnimation(.easeOut(duration: 0.15)) {
+                        WorkspaceState.shared.toggleSidebar()
+                    }
+                } label: {
+                    Image(systemName: "sidebar.left")
+                        .font(.system(size: 12))
+                        .padding(6)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Hide Sidebar (⌥⌘S)")
+                .accessibilityIdentifier("collapseSidebarButton")
             }
-            .buttonStyle(.plain)
             .foregroundStyle(chromeForeground.opacity(0.7))
             .padding(8)
-            .accessibilityIdentifier("newTabButton")
         }
         .background(chromeOverlay)
     }

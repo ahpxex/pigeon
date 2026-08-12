@@ -52,6 +52,14 @@ case "$1" in
     curl -sf -X POST --data '{"key":"enter"}' "$BASE/input/key"
     ;;
   text)       curl -sf "$BASE/text" ;;
+  sidebar)
+    case "$2" in
+      "")        curl -sf "$BASE/sidebar" ;;
+      show)      curl -sf -X POST --data '{"collapsed":false}' "$BASE/sidebar" ;;
+      hide)      curl -sf -X POST --data '{"collapsed":true}' "$BASE/sidebar" ;;
+      *)         curl -sf -X POST --data "{\"width\":$2}" "$BASE/sidebar" ;;
+    esac
+    ;;
   screenshot)
     out="${2:-pigeon.png}"
     win=$(curl -sf "$BASE/state" | /usr/bin/python3 -c 'import json,sys; print(json.load(sys.stdin)["windowNumber"])')

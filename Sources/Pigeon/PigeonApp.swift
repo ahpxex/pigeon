@@ -22,6 +22,16 @@ struct PigeonApp: App {
                 }
                 .keyboardShortcut("t", modifiers: .command)
             }
+            CommandGroup(after: .sidebar) {
+                Button("Toggle Sidebar") {
+                    Task { @MainActor in
+                        withAnimation(.easeOut(duration: 0.15)) {
+                            WorkspaceState.shared.toggleSidebar()
+                        }
+                    }
+                }
+                .keyboardShortcut("s", modifiers: [.command, .option])
+            }
         }
     }
 }

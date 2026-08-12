@@ -18,6 +18,8 @@ import Network
 ///                              for enter/escape/ctrl-x)
 ///   POST /input/key         <- {"key": "enter"} — named key or "ctrl-x"
 ///   GET  /text[?id=...]     -> raw screen text of the tab (default: selected)
+///   GET  /sidebar           -> {collapsed, width}
+///   POST /sidebar           <- {"collapsed": bool?, "width": number?}
 final class DriverServer {
     static let shared = DriverServer()
 
@@ -245,6 +247,28 @@ final class DriverServer {
                 return HTTPResponse(status: 404, error: "tab not found")
             }
             return HTTPResponse(text: tab.surfaceView.screenText())
+
+        case ("GET", "/sidebar"):
+            let workspace = WorkspaceState.shared
+            return HTTPResponse(json: [
+                "collapsed": workspace.sidebarCollapsed,
+                "width": workspace.sidebarWidth,
+            ])
+
+        case ("POST", "/sidebar"):
+            guard let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any]
+            else { return HTTPResponse(status: 400, error: "body must be JSON") }
+            let workspace = WorkspaceState.shared
+            if let collapsed = json["collapsed"] as? Bool {
+                workspace.sidebarCollapsed = collapsed
+            }
+            if let width = json["width"] as? Double {
+                workspace.sidebarWidth = WorkspaceState.clampWidth(width)
+            }
+            return HTTPResponse(json: [
+                "collapsed": workspace.sidebarCollapsed,
+                "width": workspace.sidebarWidth,
+            ])
 
         default:
             return HTTPResponse(status: 404, error: "unknown endpoint \(request.method) \(request.path)")

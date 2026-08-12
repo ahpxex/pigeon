@@ -68,6 +68,7 @@ scripts/pigeonctl new-tab / select <id> / close <id>
 scripts/pigeonctl run 'echo hi'   # 输入命令并回车
 scripts/pigeonctl key enter|escape|tab|up|down|ctrl-c|...
 scripts/pigeonctl text            # 读回整屏文本 —— 断言用这个
+scripts/pigeonctl sidebar [show|hide|<width>]  # 侧边栏状态/折叠/宽度
 scripts/pigeonctl screenshot x.png# 用 state 里的 windowNumber 精确截窗口
 scripts/pigeonctl quit
 ```
@@ -80,17 +81,17 @@ scripts/pigeonctl quit
 
 ## 当前状态与路线图
 
-已实现：垂直 Tab 侧边栏（多 tab、切换保活、关闭、cmd+T/W、cmd+1-9 走 ghostty 键位）、窗口配色与终端主题统一（hiddenTitleBar 全铺背景色）、驱动服务与 pigeonctl、键盘（含基本 IME preedit）、鼠标、剪贴板、标题、光标形状、bell、URL 打开、Ghostty 配置加载。
+已实现：垂直 Tab 侧边栏（多 tab、切换保活、关闭、cmd+T/W、cmd+1-9 走 ghostty 键位；拖拽调宽 160-420、拖到 <120 或 ⌥⌘S 折叠，状态持久化在 UserDefaults，`WorkspaceState`）、窗口配色与终端主题统一（hiddenTitleBar 全铺背景色）、驱动服务与 pigeonctl、键盘（含基本 IME preedit）、鼠标、剪贴板、标题、光标形状、bell、URL 打开、Ghostty 配置加载。
 
 已知简化（做功能时优先补这些）：
 - 剪贴板读取确认（OSC 52）目前直接放行，没有像 Ghostty 那样弹确认框
 - close_surface 没有"进程还活着"的确认对话框；tab 关闭即杀 shell
 - IME 候选框定位实现了，但 preedit 文本没有渲染到终端里（composing 状态只是不发 key）
 - `GHOSTTY_ACTION_INITIAL_SIZE` / `CELL_SIZE` 被忽略，窗口不会按行列数吸附
-- 侧边栏不可折叠、宽度固定 220、不能拖拽排序 tab
+- tab 不能拖拽排序
 - 无 split、无多窗口管理、无设置界面；配置热重载未接（改 ghostty config 要重启）
 
-路线图（用户随时会调整）：侧边栏打磨（折叠/拖拽排序）→ splits → 设置界面 → 多窗口 → 主题。
+路线图（用户随时会调整）：tab 拖拽排序 → splits → 设置界面 → 多窗口 → 主题。
 
 ## 约定
 
