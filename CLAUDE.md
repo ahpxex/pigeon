@@ -28,6 +28,7 @@ vendor/                      # 全部 gitignore，由 scripts/setup.sh 重建
 关键机制：
 
 - **libghostty 自己渲染**。它往 SurfaceView 上挂 CAMetalLayer 并在独立线程画图。Swift 层不调用任何绘制 API，只需要在 resize/scale 变化时调 `ghostty_surface_set_size` / `set_content_scale`（单位是物理像素）。
+- **配置热重载必须双管齐下**：`ghostty_app_update_config` 只更新 app 级状态，活着的 surface 要逐个调 `ghostty_surface_update_config`，否则字体/颜色改了不生效（Ghostty 官方也是这么做的）。
 - **事件循环**：libghostty 的 `wakeup_cb` 可能从任意线程来，必须 dispatch 到主线程再调 `ghostty_app_tick`。所有 action 回调里碰 AppKit 的代码同样要回主线程。
 - **回调 userdata 约定**：app 级回调的 userdata 是 `Ghostty.App`，surface 级回调（clipboard、close_surface）的 userdata 是 `SurfaceView`。从 `ghostty_surface_t` 反查视图用 `ghostty_surface_userdata`。
 - **键盘**：keyDown 先过 `interpretKeyEvents`（走 IME），把产生的文本挂到 key event 的 `text` 字段再交给 `ghostty_surface_key`；cmd 组合键走 `performKeyEquivalent`，先用 `ghostty_surface_key_is_binding` 探测，不是 binding 就放行给菜单。
@@ -94,7 +95,7 @@ scripts/pigeonctl quit
 - `GHOSTTY_ACTION_INITIAL_SIZE` / `CELL_SIZE` 被忽略，窗口不会按行列数吸附
 - 无 split、无多窗口管理、无设置界面；配置热重载未接（改 ghostty config 要重启）
 
-已有设置界面（⌘, 打开，SwiftUI Settings scene 分四个 Tab）：General（标签风格、图标分类，`AppSettings`）、Appearance（系统/亮/暗、主题色）、Terminal（内核 GUI 设置：字体/字号/前背景色/光标/不透明度，`KernelSettings` 写进配置文件末尾的 pigeon-settings 托管块并热重载，块外内容留给手改且被托管块覆盖）、Advanced（配置文件路径/打开/重载）。程序化打开设置窗口必须走 SwiftUI openSettings 环境动作（`SettingsOpener` 桥接 + `.pigeonOpenSettings` 通知）—— showSettingsWindow: 等老 selector 在 macOS 26 上已失效；cmd+, 在 performKeyEquivalent 里明确不给 ghostty（它默认绑成 open_config）。
+已有设置界面（⌘, 打开，SwiftUI Settings scene 分四个 Tab）：General（标签风格、图标分类，`AppSettings`）、Appearance（系统/亮/暗、主题色）、Terminal（内核 GUI 设置：字体=系统等宽字体枚举 Picker、字号滑杆、9 个内置主题卡片（One Dark/GitHub/Solarized/Dracula/Nord/Tokyo Night/Monokai，写完整 16 色 palette）、光标、不透明度；`KernelSettings` 写进配置文件末尾的 pigeon-settings 托管块并热重载，块外内容留给手改且被托管块覆盖）、Agent（AI Provider 管理：内置 Anthropic/OpenAI/DeepSeek + 自定义 Provider（URL+模型+key），模型是枚举 Select 可从 /models 端点刷新，API key 每个 Provider 单独存 Keychain（service dev.ahpx.pigeon.agent），`AgentSettings`）、Advanced（配置文件路径/打开/重载）。程序化打开设置窗口必须走 SwiftUI openSettings 环境动作（`SettingsOpener` 桥接 + `.pigeonOpenSettings` 通知）—— showSettingsWindow: 等老 selector 在 macOS 26 上已失效；cmd+, 在 performKeyEquivalent 里明确不给 ghostty（它默认绑成 open_config）。
 
 路线图（用户随时会调整）：splits → 多窗口 → 主题。
 

@@ -135,6 +135,7 @@ extension Ghostty {
 
         /// Rebuild the config from Pigeon's file and push it to the app
         /// (propagates to all live surfaces).
+        @MainActor
         func reloadConfig() {
             guard let app else { return }
             guard let newConfig = ConfigStore.load() else {
@@ -143,6 +144,13 @@ extension Ghostty {
             }
             objectWillChange.send()
             ghostty_app_update_config(app, newConfig)
+            // The app-level update does not touch live surfaces; each one
+            // must be updated explicitly (fonts, colors, etc).
+            for tab in TabManager.shared.tabs {
+                if let surface = tab.surfaceView.surface {
+                    ghostty_surface_update_config(surface, newConfig)
+                }
+            }
             if let old = config { ghostty_config_free(old) }
             config = newConfig
         }
@@ -220,7 +228,7 @@ extension Ghostty {
                 return true
 
             case GHOSTTY_ACTION_RELOAD_CONFIG:
-                DispatchQueue.main.async { App.shared.reloadConfig() }
+                Task { @MainActor in App.shared.reloadConfig() }
                 return true
 
             case GHOSTTY_ACTION_CONFIG_CHANGE:

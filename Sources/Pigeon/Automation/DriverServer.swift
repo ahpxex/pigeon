@@ -355,11 +355,12 @@ final class DriverServer {
             let kernel = KernelSettings.shared
             if let v = json["fontFamily"] as? String { kernel.fontFamily = v }
             if let v = json["fontSize"] as? Double { kernel.fontSize = v }
-            if let v = json["background"] as? String, let color = Color(hex: v) {
-                kernel.backgroundColor = color
-            }
-            if let v = json["foreground"] as? String, let color = Color(hex: v) {
-                kernel.foregroundColor = color
+            if json.keys.contains("theme") {
+                let id = json["theme"] as? String
+                guard id == nil || TerminalTheme.theme(id: id) != nil else {
+                    return HTTPResponse(status: 400, error: "unknown theme")
+                }
+                kernel.themeID = id
             }
             if let v = json["cursorStyle"] as? String,
                let style = KernelSettings.CursorStyle(rawValue: v) {
@@ -415,6 +416,7 @@ final class DriverServer {
         return [
             "fontFamily": kernel.fontFamily,
             "fontSize": kernel.fontSize,
+            "theme": kernel.themeID as Any,
             "cursorStyle": kernel.cursorStyle.rawValue,
             "backgroundOpacity": kernel.backgroundOpacity,
         ]

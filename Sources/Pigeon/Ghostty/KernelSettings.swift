@@ -31,12 +31,29 @@ final class KernelSettings: ObservableObject {
         }
     }
 
+    /// Empty string = system default font.
     @Published var fontFamily: String = ""
     @Published var fontSize: Double = 13
-    @Published var backgroundColor: Color = Color(hex: "#282C34") ?? .black
-    @Published var foregroundColor: Color = Color(hex: "#FFFFFF") ?? .white
+    /// TerminalTheme id; nil = whatever the config file says.
+    @Published var themeID: String? {
+        didSet { UserDefaults.standard.set(themeID, forKey: "kernelThemeID") }
+    }
     @Published var cursorStyle: CursorStyle = .block
     @Published var backgroundOpacity: Double = 1.0
+
+    /// Monospace font families installed on this machine.
+    static let monospaceFamilies: [String] = {
+        let manager = NSFontManager.shared
+        let names = manager.availableFontNames(with: .fixedPitchFontMask) ?? []
+        var families: Set<String> = []
+        for name in names {
+            if let family = NSFont(name: name, size: 12)?.familyName,
+               !family.hasPrefix(".") {
+                families.insert(family)
+            }
+        }
+        return families.sorted()
+    }()
 
     private static let beginMarker = "# >>> pigeon-settings — managed by the Settings window; edits inside this block will be overwritten"
     private static let endMarker = "# <<< pigeon-settings"
@@ -44,6 +61,7 @@ final class KernelSettings: ObservableObject {
     private var applyTask: Task<Void, Never>?
 
     private init() {
+        themeID = UserDefaults.standard.string(forKey: "kernelThemeID")
         loadFromConfig()
     }
 
@@ -59,20 +77,6 @@ final class KernelSettings: ObservableObject {
         var size: Float = 13
         if key("font-size", into: &size, config: config) {
             fontSize = Double(size)
-        }
-
-        var color = ghostty_config_color_s()
-        if key("background", into: &color, config: config) {
-            backgroundColor = Color(
-                red: Double(color.r) / 255,
-                green: Double(color.g) / 255,
-                blue: Double(color.b) / 255)
-        }
-        if key("foreground", into: &color, config: config) {
-            foregroundColor = Color(
-                red: Double(color.r) / 255,
-                green: Double(color.g) / 255,
-                blue: Double(color.b) / 255)
         }
 
         var style: UnsafePointer<CChar>? = nil
@@ -93,7 +97,7 @@ final class KernelSettings: ObservableObject {
         }
     }
 
-    /// Debounced write + live reload (color pickers fire continuously).
+    /// Debounced write + live reload (sliders fire continuously).
     func scheduleApply() {
         applyTask?.cancel()
         applyTask = Task { @MainActor in
@@ -110,10 +114,15 @@ final class KernelSettings: ObservableObject {
             lines.append("font-family = \(fontFamily)")
         }
         lines.append("font-size = \(formatNumber(fontSize))")
-        lines.append("background = \(hexString(backgroundColor))")
-        lines.append("foreground = \(hexString(foregroundColor))")
         lines.append("cursor-style = \(cursorStyle.rawValue)")
         lines.append("background-opacity = \(formatNumber(backgroundOpacity))")
+        if let theme = TerminalTheme.theme(id: themeID) {
+            lines.append("background = \(theme.background)")
+            lines.append("foreground = \(theme.foreground)")
+            for (index, color) in theme.palette.enumerated() {
+                lines.append("palette = \(index)=#\(color)")
+            }
+        }
         lines.append(Self.endMarker)
 
         let url = Ghostty.ConfigStore.configFileURL
@@ -147,14 +156,5 @@ final class KernelSettings: ObservableObject {
         value == value.rounded()
             ? String(Int(value))
             : String(format: "%.2f", value)
-    }
-
-    private func hexString(_ color: Color) -> String {
-        let ns = NSColor(color).usingColorSpace(.sRGB) ?? .black
-        return String(
-            format: "#%02X%02X%02X",
-            Int(round(ns.redComponent * 255)),
-            Int(round(ns.greenComponent * 255)),
-            Int(round(ns.blueComponent * 255)))
     }
 }
