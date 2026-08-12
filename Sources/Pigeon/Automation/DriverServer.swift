@@ -345,6 +345,10 @@ final class DriverServer {
                 "width": workspace.sidebarWidth,
             ])
 
+        case ("POST", "/config/reload"):
+            Ghostty.App.shared.reloadConfig()
+            return HTTPResponse(json: ["ok": true, "path": Ghostty.ConfigStore.configFileURL.path])
+
         case ("GET", "/settings"):
             return HTTPResponse(json: settingsJSON())
 

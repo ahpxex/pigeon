@@ -1,4 +1,6 @@
+import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct SettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
@@ -48,8 +50,22 @@ struct SettingsView: View {
                 }
             }
 
-            Section {
-                Text("Terminal colors, fonts, and keybindings come from the Ghostty config file (~/.config/ghostty/config).")
+            Section("Terminal") {
+                LabeledContent("Config file") {
+                    Text("~/.config/pigeon/config")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+                HStack {
+                    Button("Open Config File") {
+                        openConfigFile()
+                    }
+                    Button("Reload Config") {
+                        Ghostty.App.shared.reloadConfig()
+                    }
+                }
+                Text("Colors, fonts, and keybindings use Ghostty's config format, but this file belongs to Pigeon — it is independent from Ghostty.app's configuration.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -57,6 +73,19 @@ struct SettingsView: View {
         .formStyle(.grouped)
         .frame(width: 440)
         .fixedSize()
+    }
+
+    private func openConfigFile() {
+        let url = Ghostty.ConfigStore.configFileURL
+        Ghostty.ConfigStore.prepare()
+        // Extensionless file: route through the default plain-text editor.
+        if let editor = NSWorkspace.shared.urlForApplication(toOpen: .plainText) {
+            NSWorkspace.shared.open(
+                [url], withApplicationAt: editor,
+                configuration: NSWorkspace.OpenConfiguration())
+        } else {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        }
     }
 
     @ViewBuilder

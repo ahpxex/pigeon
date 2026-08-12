@@ -85,6 +85,7 @@ case "$1" in
       curl -sf -X POST --data "$2" "$BASE/settings"
     fi
     ;;
+  reload-config) curl -sf -X POST "$BASE/config/reload" ;;
   quit)       pkill -x Pigeon ;;
   *)
     sed -n '2,15p' "$0" >&2

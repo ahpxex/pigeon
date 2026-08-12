@@ -36,15 +36,12 @@ extension Ghostty {
                 return
             }
 
-            // Load configuration from the standard Ghostty locations
-            // (e.g. ~/.config/ghostty/config). Pigeon reuses Ghostty's
-            // configuration format.
-            guard let config = ghostty_config_new() else {
-                readiness = .error("ghostty_config_new failed")
+            // Pigeon's own kernel config (~/.config/pigeon/config) —
+            // deliberately isolated from Ghostty.app's configuration.
+            guard let config = ConfigStore.load() else {
+                readiness = .error("failed to load config")
                 return
             }
-            ghostty_config_load_default_files(config)
-            ghostty_config_finalize(config)
             self.config = config
 
             var runtime = ghostty_runtime_config_s(
@@ -124,6 +121,20 @@ extension Ghostty {
             ghostty_app_tick(app)
         }
 
+        /// Rebuild the config from Pigeon's file and push it to the app
+        /// (propagates to all live surfaces).
+        func reloadConfig() {
+            guard let app else { return }
+            guard let newConfig = ConfigStore.load() else {
+                Ghostty.logger.error("config reload failed")
+                return
+            }
+            objectWillChange.send()
+            ghostty_app_update_config(app, newConfig)
+            if let old = config { ghostty_config_free(old) }
+            config = newConfig
+        }
+
         /// Tear down libghostty state. Called on app termination.
         func shutdown() {
             NotificationCenter.default.removeObserver(self)
@@ -194,6 +205,24 @@ extension Ghostty {
                 else { return false }
                 let pwd = String(cString: cPwd)
                 DispatchQueue.main.async { view.pwd = pwd }
+                return true
+
+            case GHOSTTY_ACTION_RELOAD_CONFIG:
+                DispatchQueue.main.async { App.shared.reloadConfig() }
+                return true
+
+            case GHOSTTY_ACTION_CONFIG_CHANGE:
+                // Emitted after ghostty_app_update_config; nothing extra
+                // to do — our published change already refreshed the UI.
+                return true
+
+            case GHOSTTY_ACTION_OPEN_CONFIG:
+                DispatchQueue.main.async {
+                    // cmd+, in ghostty terms means "open config"; in Pigeon
+                    // that's the Settings window, which links to the file.
+                    if NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) { return }
+                    _ = NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
+                }
                 return true
 
             case GHOSTTY_ACTION_RING_BELL:
