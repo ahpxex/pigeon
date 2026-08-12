@@ -152,22 +152,17 @@ private struct TabSidebar: View {
 
             ScrollView {
                 VStack(spacing: rowSpacing) {
-                    ForEach(tabManager.tabs) { tab in
-                        TabRow(
-                            tab: tab,
-                            surfaceView: tab.surfaceView,
-                            isSelected: tab.id == tabManager.selectedTabID,
-                            isOnlyTab: tabManager.tabs.count == 1)
-                        .background(rowHeightReader)
-                        .offset(y: rowOffset(for: tab))
-                        .zIndex(draggingTabID == tab.id ? 1 : 0)
-                        .shadow(
-                            color: .black.opacity(draggingTabID == tab.id ? 0.3 : 0),
-                            radius: 4, y: 2)
-                        // High priority so the row wins drags over the
-                        // ScrollView; trackpad/wheel scrolling is a separate
-                        // event type on macOS and keeps working.
-                        .highPriorityGesture(reorderGesture(for: tab))
+                    ForEach(tabManager.ungroupedTabs) { tab in
+                        decoratedRow(for: tab)
+                    }
+                    ForEach(tabManager.groups) { group in
+                        GroupHeaderRow(group: group)
+                        if group.isExpanded {
+                            ForEach(tabManager.tabs(in: group)) { tab in
+                                decoratedRow(for: tab)
+                                    .padding(.leading, 14)
+                            }
+                        }
                     }
                 }
                 .padding(.horizontal, 8)
@@ -222,6 +217,25 @@ private struct TabSidebar: View {
 
     // MARK: Reordering
 
+    @ViewBuilder
+    private func decoratedRow(for tab: TerminalTab) -> some View {
+        TabRow(
+            tab: tab,
+            surfaceView: tab.surfaceView,
+            isSelected: tab.id == tabManager.selectedTabID,
+            isOnlyTab: tabManager.tabs.count == 1)
+        .background(rowHeightReader)
+        .offset(y: rowOffset(for: tab))
+        .zIndex(draggingTabID == tab.id ? 1 : 0)
+        .shadow(
+            color: .black.opacity(draggingTabID == tab.id ? 0.3 : 0),
+            radius: 4, y: 2)
+        // High priority so the row wins drags over the ScrollView;
+        // trackpad/wheel scrolling is a separate event type on macOS
+        // and keeps working.
+        .highPriorityGesture(reorderGesture(for: tab))
+    }
+
     /// Rows are uniform height; measure the first one so slot math stays
     /// correct across font/OS changes.
     private var rowHeightReader: some View {
@@ -232,10 +246,18 @@ private struct TabSidebar: View {
 
     private var slotHeight: CGFloat { rowSlotHeight + rowSpacing }
 
+    /// Reordering happens within a tab's container: its group, or the
+    /// ungrouped top level. Cross-container moves go through the
+    /// context menu, which keeps the drag slot math local and simple.
+    private func containerMembers(of tab: TerminalTab) -> [TerminalTab] {
+        tabManager.tabs.filter { $0.groupID == tab.groupID }
+    }
+
     private func reorderGesture(for tab: TerminalTab) -> some Gesture {
         DragGesture(minimumDistance: 4)
             .onChanged { value in
-                guard let from = tabManager.tabs.firstIndex(where: { $0.id == tab.id })
+                let members = containerMembers(of: tab)
+                guard let from = members.firstIndex(where: { $0.id == tab.id })
                 else { return }
                 if draggingTabID == nil {
                     draggingTabID = tab.id
@@ -244,7 +266,7 @@ private struct TabSidebar: View {
                 dragTranslation = value.translation.height
 
                 let slots = Int((dragTranslation / slotHeight).rounded())
-                let target = max(0, min(tabManager.tabs.count - 1, from + slots))
+                let target = max(0, min(members.count - 1, from + slots))
                 if target != dragTargetIndex {
                     withAnimation(.easeOut(duration: 0.12)) {
                         dragTargetIndex = target
@@ -255,7 +277,7 @@ private struct TabSidebar: View {
                 withAnimation(.easeOut(duration: 0.15)) {
                     if let id = draggingTabID,
                        let target = dragTargetIndex {
-                        tabManager.move(tabID: id, toIndex: target)
+                        tabManager.move(tabID: id, toContainerIndex: target)
                     }
                     draggingTabID = nil
                     dragTranslation = 0
@@ -264,21 +286,91 @@ private struct TabSidebar: View {
             }
     }
 
-    /// The dragged row follows the pointer; rows between the original and
-    /// target positions slide one slot out of the way.
+    /// The dragged row follows the pointer; container-mates between the
+    /// original and target positions slide one slot out of the way.
     private func rowOffset(for tab: TerminalTab) -> CGFloat {
         guard let dragID = draggingTabID,
-              let from = tabManager.tabs.firstIndex(where: { $0.id == dragID }),
-              let target = dragTargetIndex
+              let dragged = tabManager.tabs.first(where: { $0.id == dragID })
         else { return 0 }
 
         if tab.id == dragID { return dragTranslation }
 
-        guard let index = tabManager.tabs.firstIndex(where: { $0.id == tab.id })
+        // Only rows in the same container react.
+        guard tab.groupID == dragged.groupID,
+              let target = dragTargetIndex
+        else { return 0 }
+
+        let members = containerMembers(of: dragged)
+        guard let from = members.firstIndex(where: { $0.id == dragID }),
+              let index = members.firstIndex(where: { $0.id == tab.id })
         else { return 0 }
         if from < index && index <= target { return -slotHeight }
         if target <= index && index < from { return slotHeight }
         return 0
+    }
+}
+
+/// Collapsible group section header.
+private struct GroupHeaderRow: View {
+    @ObservedObject var group: TabGroup
+    @EnvironmentObject private var ghostty: Ghostty.App
+    @State private var hovering = false
+    @State private var renaming = false
+    @State private var draftName = ""
+    @FocusState private var renameFieldFocused: Bool
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "chevron.right")
+                .font(.system(size: 8, weight: .bold))
+                .rotationEffect(.degrees(group.isExpanded ? 90 : 0))
+                .opacity(0.5)
+
+            if renaming {
+                TextField("", text: $draftName)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 11, weight: .semibold))
+                    .focused($renameFieldFocused)
+                    .onSubmit { commitRename() }
+                    .onExitCommand { renaming = false }
+                    .onChange(of: renameFieldFocused) { focused in
+                        if !focused && renaming { commitRename() }
+                    }
+            } else {
+                Text(group.name)
+                    .font(.system(size: 11, weight: .semibold))
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .padding(.top, 6)
+        .foregroundStyle(ghostty.foregroundColor.opacity(hovering ? 0.8 : 0.55))
+        .contentShape(Rectangle())
+        .onTapGesture {
+            withAnimation(.easeOut(duration: 0.15)) {
+                group.isExpanded.toggle()
+            }
+        }
+        .onHover { hovering = $0 }
+        .contextMenu {
+            Button("Rename Group") { startRename() }
+            Button("Ungroup") { TabManager.shared.ungroup(group) }
+        }
+    }
+
+    private func startRename() {
+        draftName = group.name
+        renaming = true
+        renameFieldFocused = true
+    }
+
+    private func commitRename() {
+        guard renaming else { return }
+        renaming = false
+        let trimmed = draftName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty { group.name = trimmed }
     }
 }
 
@@ -307,11 +399,20 @@ private struct TabRow: View {
         tabState.customTitle ?? surfaceView.title
     }
 
+    @State private var showingIconPicker = false
+
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: "terminal")
-                .font(.system(size: 11))
-                .opacity(0.6)
+            if let icon = TabIcon.image(for: tabState.iconCode) {
+                Image(nsImage: icon)
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: 16, height: 16)
+            } else {
+                Image(systemName: "terminal")
+                    .font(.system(size: 11))
+                    .opacity(0.6)
+            }
 
             if renaming {
                 TextField("", text: $draftTitle)
@@ -365,9 +466,33 @@ private struct TabRow: View {
                     tabState.customTitle = nil
                 }
             }
+            Button("Change Icon…") { showingIconPicker = true }
+            Divider()
+            Menu("Move to Group") {
+                ForEach(TabManager.shared.groups) { group in
+                    Button(group.name) {
+                        TabManager.shared.assign(tab, to: group)
+                    }
+                    .disabled(group.id == tabState.groupID)
+                }
+                if !TabManager.shared.groups.isEmpty { Divider() }
+                Button("New Group") {
+                    let group = TabManager.shared.createGroup()
+                    TabManager.shared.assign(tab, to: group)
+                }
+                if tabState.groupID != nil {
+                    Divider()
+                    Button("Remove from Group") {
+                        TabManager.shared.assign(tab, to: nil)
+                    }
+                }
+            }
             Divider()
             Button("Close Tab") { TabManager.shared.close(tab) }
                 .disabled(isOnlyTab)
+        }
+        .popover(isPresented: $showingIconPicker, arrowEdge: .trailing) {
+            IconPicker(tab: tabState)
         }
     }
 
@@ -395,6 +520,45 @@ private struct TabRow: View {
         DispatchQueue.main.async {
             surfaceView.window?.makeFirstResponder(surfaceView)
         }
+    }
+}
+
+/// Grid of the bundled OpenMoji icons for picking a tab icon.
+private struct IconPicker: View {
+    @ObservedObject var tab: TerminalTab
+    @Environment(\.dismiss) private var dismiss
+
+    private let columns = Array(repeating: GridItem(.fixed(28), spacing: 4), count: 8)
+
+    var body: some View {
+        ScrollView {
+            LazyVGrid(columns: columns, spacing: 4) {
+                ForEach(TabIcon.codes, id: \.self) { code in
+                    Button {
+                        tab.iconCode = code
+                        dismiss()
+                    } label: {
+                        Group {
+                            if let image = TabIcon.image(for: code) {
+                                Image(nsImage: image)
+                                    .resizable()
+                                    .interpolation(.high)
+                                    .frame(width: 22, height: 22)
+                            }
+                        }
+                        .frame(width: 28, height: 28)
+                        .background(
+                            RoundedRectangle(cornerRadius: 5)
+                                .fill(tab.iconCode == code
+                                    ? Color.accentColor.opacity(0.3)
+                                    : Color.clear))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(10)
+        }
+        .frame(width: 8 * 32 + 20, height: 240)
     }
 }
 

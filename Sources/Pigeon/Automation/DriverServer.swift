@@ -15,6 +15,9 @@ import Network
 ///   POST /tabs/close        <- {"id": "..."}
 ///   POST /tabs/move         <- {"id": "...", "index": 0}
 ///   POST /tabs/rename       <- {"id": "...", "title": "..."} (empty resets)
+///   POST /tabs/icon         <- {"id": "...", "icon": "1F54A"}
+///   POST /groups/new        <- {"name": "..."} -> {id}
+///   POST /groups/assign     <- {"tabId": "...", "groupId": "..."|null}
 ///   POST /input/text        <- raw body, pasted into the selected tab
 ///                              (goes through the paste path; use /input/key
 ///                              for enter/escape/ctrl-x)
@@ -191,6 +194,15 @@ final class DriverServer {
                         "title": tab.customTitle ?? tab.surfaceView.title,
                         "shellTitle": tab.surfaceView.title,
                         "selected": tab.id == manager.selectedTabID,
+                        "icon": tab.iconCode,
+                        "groupId": tab.groupID?.uuidString as Any,
+                    ]
+                },
+                "groups": manager.groups.map { group in
+                    [
+                        "id": group.id.uuidString,
+                        "name": group.name,
+                        "expanded": group.isExpanded,
                     ]
                 },
                 "windowNumber": window?.windowNumber ?? -1,
@@ -233,6 +245,35 @@ final class DriverServer {
                   let tab = manager.tabs.first(where: { $0.id.uuidString == id })
             else { return HTTPResponse(status: 400, error: "need {id, title}") }
             tab.customTitle = title.isEmpty ? nil : title
+            return HTTPResponse(json: ["ok": true])
+
+        case ("POST", "/tabs/icon"):
+            guard let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any],
+                  let id = json["id"] as? String,
+                  let icon = json["icon"] as? String,
+                  let tab = manager.tabs.first(where: { $0.id.uuidString == id }),
+                  TabIcon.codes.contains(icon)
+            else { return HTTPResponse(status: 400, error: "need {id, icon} with a known icon code") }
+            tab.iconCode = icon
+            return HTTPResponse(json: ["ok": true])
+
+        case ("POST", "/groups/new"):
+            let json = (try? JSONSerialization.jsonObject(with: request.body) as? [String: Any]) ?? [:]
+            let group = manager.createGroup(named: json["name"] as? String)
+            return HTTPResponse(json: ["id": group.id.uuidString])
+
+        case ("POST", "/groups/assign"):
+            guard let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any],
+                  let tabID = json["tabId"] as? String,
+                  let tab = manager.tabs.first(where: { $0.id.uuidString == tabID })
+            else { return HTTPResponse(status: 400, error: "need {tabId, groupId|null}") }
+            if let groupID = json["groupId"] as? String {
+                guard let group = manager.groups.first(where: { $0.id.uuidString == groupID })
+                else { return HTTPResponse(status: 404, error: "group not found") }
+                manager.assign(tab, to: group)
+            } else {
+                manager.assign(tab, to: nil)
+            }
             return HTTPResponse(json: ["ok": true])
 
         case ("POST", "/input/text"):

@@ -47,6 +47,15 @@ case "$1" in
   close)      curl -sf -X POST --data "{\"id\":\"$2\"}" "$BASE/tabs/close" ;;
   move)       curl -sf -X POST --data "{\"id\":\"$2\",\"index\":$3}" "$BASE/tabs/move" ;;
   rename)     curl -sf -X POST --data "{\"id\":\"$2\",\"title\":\"$3\"}" "$BASE/tabs/rename" ;;
+  icon)       curl -sf -X POST --data "{\"id\":\"$2\",\"icon\":\"$3\"}" "$BASE/tabs/icon" ;;
+  group-new)  curl -sf -X POST --data "{\"name\":\"$2\"}" "$BASE/groups/new" ;;
+  group-assign)
+    if [ "$3" = "none" ]; then
+      curl -sf -X POST --data "{\"tabId\":\"$2\",\"groupId\":null}" "$BASE/groups/assign"
+    else
+      curl -sf -X POST --data "{\"tabId\":\"$2\",\"groupId\":\"$3\"}" "$BASE/groups/assign"
+    fi
+    ;;
   type)       printf '%s' "$2" | curl -sf -X POST --data-binary @- "$BASE/input/text" ;;
   key)        curl -sf -X POST --data "{\"key\":\"$2\"}" "$BASE/input/key" ;;
   run)
