@@ -60,7 +60,7 @@ private struct TerminalWorkspace: View {
             .padding(EdgeInsets(
                 top: workspace.sidebarCollapsed ? 40 : 14,
                 leading: workspace.sidebarCollapsed ? 12 : 10,
-                bottom: 10,
+                bottom: 0,
                 trailing: 12))
             .frame(minWidth: 200, maxWidth: .infinity, minHeight: 100, maxHeight: .infinity)
         }
