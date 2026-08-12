@@ -58,3 +58,7 @@ targets:
           mkdir -p "$RES"
           rsync -a --delete "$SHARE/ghostty/" "$RES/ghostty/"
           rsync -a --delete "$SHARE/terminfo/" "$RES/terminfo/"
+          # Terminal-native agent: extend the zsh shell integration with
+          # the command_not_found_handler that routes natural language to
+          # the built-in agent.
+          cat "$SRCROOT/scripts/pigeon-integration.zsh" >> "$RES/ghostty/shell-integration/zsh/ghostty-integration"

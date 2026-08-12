@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         AppSettings.shared.applyAppearance()
+        AgentServer.shared.start()
         DriverServer.shared.startIfConfigured()
     }
 

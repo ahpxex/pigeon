@@ -397,6 +397,35 @@ final class DriverServer {
                 "configFontFamily": family.map { String(cString: $0) } as Any,
             ])
 
+        case ("POST", "/agent/provider"):
+            // Test/automation hook: upsert a custom provider and make it
+            // the default. {name, baseURL, model, apiKey}
+            guard let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any],
+                  let name = json["name"] as? String,
+                  let baseURL = json["baseURL"] as? String,
+                  let model = json["model"] as? String
+            else { return HTTPResponse(status: 400, error: "need {name, baseURL, model, apiKey?}") }
+            let agent = AgentSettings.shared
+            var provider: AgentProvider
+            if let existing = agent.providers.first(where: { $0.name == name }) {
+                provider = existing
+            } else {
+                provider = agent.addCustomProvider()
+                provider.name = name
+            }
+            if !provider.isBuiltin {
+                provider.baseURL = baseURL
+                provider.models = [model]
+            }
+            if !provider.models.contains(model) { provider.models.append(model) }
+            provider.selectedModel = model
+            agent.update(provider)
+            if let key = json["apiKey"] as? String {
+                agent.setAPIKey(key, for: provider)
+            }
+            agent.defaultProviderID = provider.id
+            return HTTPResponse(json: ["id": provider.id.uuidString, "agentPort": Int(AgentServer.shared.port)])
+
         case ("GET", "/settings"):
             return HTTPResponse(json: settingsJSON())
 

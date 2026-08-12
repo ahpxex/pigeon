@@ -93,6 +93,14 @@ open build/Build/Products/Debug/Pigeon.app   # 或从 Xcode 跑
 - 链接需要 `-lstdc++`（libghostty-fat.a 里静态包了 harfbuzz 等 C++ 依赖），已写在 project.yml。
 - App 不能开沙盒（终端要以用户权限起 shell），和 Ghostty/iTerm2 一样。
 
+## Agent（终端原生入口）
+
+入口就是终端本身：输入合法命令照常执行；首词不是命令时 zsh 调 `command_not_found_handler`（构建时追加到打包的 shell integration，`scripts/pigeon-integration.zsh`），整行作为自然语言 curl 到 app 内的 AgentServer（常驻 localhost，端口经 surface env `PIGEON_AGENT_PORT` 注入），回答以 chunked 流直接打回 pty（工具行灰色 ANSI）。Ctrl+C 打断 curl 即取消。
+
+运行时架构抄 Pi 的设计语法（等效 Swift 实现在 `Agent/`）：ChatStreamClient 遵守"永不 throw"契约（错误编码进事件流）；AgentRuntime 是 ≤6 轮的顺序工具 loop；事件类型化（AgentEvent）。工具全部只读：run_command 走白名单（拒绝重定向/sudo/`;`/`&&` 等逃逸）、list_dir、read_file。单短词不触发 agent（多半是敲错命令）。DeepSeek 是一等公民（OpenAI 兼容 /chat/completions + SSE + function calling），任何同协议端点即插即用。
+
+已知改进点：模型偶尔不听 plain-text 指令输出 markdown 星号；无确认机制的可变操作工具还没做（beforeToolCall 挂载点已留）。
+
 ## 自动化测试（驱动服务）
 
 **改 UI/交互后必须用驱动服务自测**，不要靠 AppleScript 或肉眼。app 内置一个 localhost HTTP 驱动（`Automation/DriverServer.swift`），设了 `PIGEON_DRIVER_PORT` 才启动，只绑 127.0.0.1。`scripts/pigeonctl` 是包装：
@@ -107,6 +115,7 @@ scripts/pigeonctl text            # 读回整屏文本 —— 断言用这个
 scripts/pigeonctl sidebar [show|hide|<width>]  # 侧边栏状态/折叠/宽度
 scripts/pigeonctl move <id> <index> / rename <id> <名字>  # 排序、重命名（空名字恢复 shell 标题）
 scripts/pigeonctl icon <id> <code> / group-new <名字> / group-assign <tabid> <groupid|none> / group-expand <id> <true|false>
+scripts/pigeonctl（另有 /agent/provider 端点配置 Provider+key，测试 agent 用 mock LLM：见 git 历史里的 mock_llm.py 模式）
 scripts/pigeonctl reload-config             # 重载 ~/.config/pigeon/config
 scripts/pigeonctl settings ['{"labelStyle":"fullPath"}']   # 读/改设置（labelStyle iconCategory appearance accentHex）|none> / group-expand <id> <true|false>|none>
 scripts/pigeonctl screenshot x.png# 用 state 里的 windowNumber 精确截窗口
@@ -132,7 +141,7 @@ scripts/pigeonctl quit
 
 已有设置界面（⌘, 打开，SwiftUI Settings scene 分四个 Tab）：General（标签风格、图标分类，`AppSettings`）、Appearance（系统/亮/暗、主题色）、Terminal（内核 GUI 设置：字体=系统等宽字体枚举 Picker、字号滑杆、9 个内置主题卡片（One Dark/GitHub/Solarized/Dracula/Nord/Tokyo Night/Monokai，写完整 16 色 palette）、光标、不透明度；`KernelSettings` 写进配置文件末尾的 pigeon-settings 托管块并热重载，块外内容留给手改且被托管块覆盖）、Agent（AI Provider 管理：内置 Anthropic/OpenAI/DeepSeek + 自定义 Provider（URL+模型+key），模型是枚举 Select 可从 /models 端点刷新，API key 每个 Provider 单独存 Keychain（service dev.ahpx.pigeon.agent），`AgentSettings`）、Advanced（配置文件路径/打开/重载）。程序化打开设置窗口必须走 SwiftUI openSettings 环境动作（`SettingsOpener` 桥接 + `.pigeonOpenSettings` 通知）—— showSettingsWindow: 等老 selector 在 macOS 26 上已失效；cmd+, 在 performKeyEquivalent 里明确不给 ghostty（它默认绑成 open_config）。
 
-路线图（用户随时会调整）：**Agent 运行时**（产品定位章节说的轻量小任务助手，Provider 配置已就位，缺执行层：对话入口 UI、把终端上下文喂给模型、工具调用如读目录/跑只读命令）→ splits → 多窗口。
+路线图（用户随时会调整）：Agent 打磨（多轮上下文记忆、屏幕内容注入、可变操作确认）→ splits → 多窗口。
 
 ## 约定
 

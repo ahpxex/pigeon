@@ -40,7 +40,22 @@ extension Ghostty {
             ))
             config.scale_factor = Double(NSScreen.main?.backingScaleFactor ?? 2.0)
 
-            guard let surface = ghostty_surface_new(app, &config) else {
+            // Expose the agent server to the shell: the zsh
+            // command_not_found_handler uses this to route natural
+            // language to the built-in agent.
+            let portValue = String(AgentServer.shared.port)
+            let surface: ghostty_surface_t? = "PIGEON_AGENT_PORT".withCString { key in
+                portValue.withCString { value in
+                    var envVar = ghostty_env_var_s(key: key, value: value)
+                    return withUnsafeMutablePointer(to: &envVar) { envPtr in
+                        config.env_vars = envPtr
+                        config.env_var_count = 1
+                        return ghostty_surface_new(app, &config)
+                    }
+                }
+            }
+
+            guard let surface else {
                 Ghostty.logger.critical("ghostty_surface_new failed")
                 return
             }
