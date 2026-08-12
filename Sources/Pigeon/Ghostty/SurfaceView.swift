@@ -41,18 +41,17 @@ extension Ghostty {
             config.scale_factor = Double(NSScreen.main?.backingScaleFactor ?? 2.0)
 
             // Expose the agent server to the shell: the zsh
-            // command_not_found_handler uses this to route natural
-            // language to the built-in agent.
-            let portValue = String(AgentServer.shared.port)
-            let surface: ghostty_surface_t? = "PIGEON_AGENT_PORT".withCString { key in
-                portValue.withCString { value in
-                    var envVar = ghostty_env_var_s(key: key, value: value)
-                    return withUnsafeMutablePointer(to: &envVar) { envPtr in
-                        config.env_vars = envPtr
-                        config.env_var_count = 1
-                        return ghostty_surface_new(app, &config)
-                    }
-                }
+            // command_not_found_handler uses these to route natural
+            // language to the built-in agent. The token authenticates the
+            // request so no other local process (or browser) can call it.
+            let env = [
+                ("PIGEON_AGENT_PORT", String(AgentServer.shared.port)),
+                ("PIGEON_AGENT_TOKEN", AgentServer.shared.token),
+            ]
+            let surface = Self.withEnvVars(env) { envPtr, count in
+                config.env_vars = envPtr
+                config.env_var_count = count
+                return ghostty_surface_new(app, &config)
             }
 
             guard let surface else {
@@ -64,6 +63,31 @@ extension Ghostty {
 
         required init?(coder: NSCoder) {
             fatalError("init(coder:) is not supported")
+        }
+
+        /// Build a C `ghostty_env_var_s` array from Swift strings, valid
+        /// only for the duration of `body` (the surface copies them).
+        private static func withEnvVars<R>(
+            _ vars: [(String, String)],
+            _ body: (UnsafeMutablePointer<ghostty_env_var_s>, Int) -> R
+        ) -> R {
+            func recurse(
+                _ index: Int,
+                _ accumulated: [ghostty_env_var_s]
+            ) -> R {
+                if index == vars.count {
+                    var array = accumulated
+                    return array.withUnsafeMutableBufferPointer { buffer in
+                        body(buffer.baseAddress!, buffer.count)
+                    }
+                }
+                return vars[index].0.withCString { key in
+                    vars[index].1.withCString { value in
+                        recurse(index + 1, accumulated + [ghostty_env_var_s(key: key, value: value)])
+                    }
+                }
+            }
+            return recurse(0, [])
         }
 
         deinit {

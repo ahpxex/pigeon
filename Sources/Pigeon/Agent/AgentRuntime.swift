@@ -126,12 +126,20 @@ enum AgentRuntime {
 
         continuation.yield(.toolStart(
             name: call.function.name,
-            summary: (arguments["command"] as? String)
-                ?? (arguments["path"] as? String)
-                ?? call.function.name))
+            summary: toolSummary(name: call.function.name, arguments: arguments)))
 
         let result = await tool.execute(arguments: arguments, cwd: cwd)
         continuation.yield(.toolEnd(name: call.function.name, ok: result.ok, summary: result.display))
         return result
+    }
+
+    /// Short human label for a tool call, from whichever arg carries the
+    /// intent.
+    private static func toolSummary(name: String, arguments: [String: Any]) -> String {
+        if let pipeline = arguments["pipeline"] as? [[String]] {
+            return pipeline.map { $0.joined(separator: " ") }.joined(separator: " | ")
+        }
+        if let path = arguments["path"] as? String { return path }
+        return name
     }
 }

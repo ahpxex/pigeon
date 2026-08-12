@@ -1,5 +1,6 @@
 import Foundation
 import Network
+import Security
 
 /// Always-on localhost server that shell hooks talk to: the zsh
 /// command_not_found_handler POSTs the natural-language line here and
@@ -7,9 +8,20 @@ import Network
 ///
 /// Protocol:
 ///   POST /ask
-///     Headers: X-Pigeon-Cwd: <working directory>
+///     Headers:
+///       Authorization: Bearer <per-launch token>   (required)
+///       Host: 127.0.0.1:<port>                       (validated)
+///       X-Pigeon-Cwd: <working directory>
 ///     Body: raw prompt text (no JSON — avoids shell quoting pain)
 ///     Response: chunked plain text, ANSI-colored for terminal display.
+///
+/// The bind is 127.0.0.1-only, but that alone is not a trust boundary:
+/// any local process — including a browser tab via a simple POST, or a
+/// DNS-rebinding page — can reach it. So every request must carry the
+/// per-launch bearer token (exported to the shell as PIGEON_AGENT_TOKEN,
+/// never guessable by a web origin), present an exact loopback Host, and
+/// carry no browser Origin. Together these close the browser and
+/// cross-process vectors.
 final class AgentServer {
     static let shared = AgentServer()
 
@@ -20,6 +32,14 @@ final class AgentServer {
         start()
         return boundPort
     }
+
+    /// Per-launch secret the shell hook must present. Regenerated every
+    /// process start, held only in memory.
+    private(set) lazy var token: String = {
+        var bytes = [UInt8](repeating: 0, count: 32)
+        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        return bytes.map { String(format: "%02x", $0) }.joined()
+    }()
 
     private var boundPort: UInt16 = 0
     private var listener: NWListener?
@@ -103,6 +123,11 @@ final class AgentServer {
     }
 
     private func handle(_ request: ParsedRequest, connection: NWConnection) {
+        // Auth + anti-rebinding + anti-CSRF, before touching the body.
+        guard isAuthorized(request) else {
+            send(connection, raw: "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            return
+        }
         guard request.method == "POST", request.path == "/ask" else {
             send(connection, raw: "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
             return
@@ -154,7 +179,9 @@ final class AgentServer {
         for await event in events {
             switch event {
             case .textDelta(let piece):
-                sendChunk(connection, piece)
+                // Terminal output is plain text; strip stray markdown bold
+                // markers the model sometimes emits despite instructions.
+                sendChunk(connection, piece.replacingOccurrences(of: "**", with: ""))
             case .toolStart(let name, let summary):
                 // Dim line so tool activity reads as machinery, not answer.
                 sendChunk(connection, "\u{1B}[2m⏺ \(name): \(summary)\u{1B}[0m\n")
@@ -174,6 +201,34 @@ final class AgentServer {
             }
         }
         finishChunks(connection)
+    }
+
+    /// Bearer token (constant-time compared) + exact loopback Host +
+    /// absent browser Origin. A malicious web page cannot forge the
+    /// token, cannot set Host, and cannot omit Origin on a cross-origin
+    /// request — so it fails all three.
+    private func isAuthorized(_ request: ParsedRequest) -> Bool {
+        guard let auth = request.headers["authorization"],
+              auth.hasPrefix("Bearer "),
+              constantTimeEquals(String(auth.dropFirst(7)), token)
+        else { return false }
+
+        let host = request.headers["host"] ?? ""
+        let validHosts = ["127.0.0.1:\(boundPort)", "localhost:\(boundPort)"]
+        guard validHosts.contains(host) else { return false }
+
+        // Browsers attach Origin to cross-origin POSTs; our shell hook
+        // never sends one. Any Origin at all is suspicious.
+        if request.headers["origin"] != nil { return false }
+        return true
+    }
+
+    private func constantTimeEquals(_ a: String, _ b: String) -> Bool {
+        let lhs = Array(a.utf8), rhs = Array(b.utf8)
+        guard lhs.count == rhs.count else { return false }
+        var diff: UInt8 = 0
+        for i in 0..<lhs.count { diff |= lhs[i] ^ rhs[i] }
+        return diff == 0
     }
 
     // MARK: Low-level send helpers

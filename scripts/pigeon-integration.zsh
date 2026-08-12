@@ -23,6 +23,7 @@ if [[ -n "$PIGEON_AGENT_PORT" ]]; then
         command curl -sN --max-time 300 \
             -X POST "http://127.0.0.1:${PIGEON_AGENT_PORT}/ask" \
             -H "Content-Type: text/plain; charset=utf-8" \
+            -H "Authorization: Bearer ${PIGEON_AGENT_TOKEN}" \
             -H "X-Pigeon-Cwd: $PWD" \
             --data-binary "$prompt"
         return 0

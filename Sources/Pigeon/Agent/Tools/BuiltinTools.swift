@@ -14,80 +14,121 @@ enum BuiltinTools {
     }
 }
 
-/// Run a command from a read-only allowlist. This covers most micro-tasks
-/// (ls, du, lsof, ps, find …) with one tool, which keeps the schema small
-/// for fast models.
+/// Run a read-only command as a structured argv pipeline — never through
+/// a shell. Because the model passes argv arrays (not a string we parse),
+/// there is no shell metacharacter, quoting, or injection surface at all:
+/// each element is one exec argument, verbatim. The allowlist and
+/// per-binary flag rejection are defense-in-depth on top of that.
 struct RunReadOnlyCommand: AgentTool {
-    /// First-word allowlist. Deliberately conservative: nothing here can
-    /// modify files or state.
-    static let allowedBinaries: Set<String> = [
+    /// Binary name → absolute path (first match wins). Only these run.
+    /// Nothing here mutates files, installs, or (with the flag rules
+    /// below) reaches the network or executes other programs.
+    static let allowedBinaries: [String] = [
         "ls", "find", "du", "df", "file", "stat", "wc", "head", "tail",
         "cat", "grep", "ps", "lsof", "whoami", "id", "date", "uname",
-        "which", "type", "env", "pwd", "uptime", "sw_vers", "mdfind",
-        "otool", "codesign", "git", "tree",
+        "which", "pwd", "uptime", "sw_vers", "mdfind", "codesign",
+        "git", "tree",
     ]
 
-    /// Even within allowed binaries, these subcommands mutate; block them.
-    static let blockedPatterns = [
-        "git push", "git commit", "git reset", "git checkout", "git clean",
-        "git rebase", "git merge", "git stash", "git rm", "git mv", "git am",
+    private static let searchDirs = [
+        "/bin", "/usr/bin", "/sbin", "/usr/sbin",
+        "/opt/homebrew/bin", "/usr/local/bin",
+    ]
+
+    /// Flags that turn an otherwise read-only binary into an arbitrary
+    /// executor or file writer. Rejected wherever they appear.
+    private static let dangerousFlags: [String: [String]] = [
+        "find": ["-exec", "-execdir", "-delete", "-fprint", "-fprintf",
+                 "-fls", "-ok", "-okdir"],
+        // git -c injects config (core.pager/sshCommand/... = arbitrary
+        // exec); the read-only subcommand allowlist is enforced separately.
+        "git": ["-c", "--exec-path", "--upload-pack", "-P"],
+    ]
+
+    /// git is powerful; only these subcommands are read-only enough.
+    private static let gitSubcommands: Set<String> = [
+        "log", "status", "diff", "show", "branch", "remote", "rev-parse",
+        "describe", "ls-files", "blame", "tag", "shortlog", "config",
+        "cat-file", "count-objects", "grep",
     ]
 
     var spec: AgentToolSpec {
         AgentToolSpec(
             name: "run_command",
             description: """
-            Run a READ-ONLY shell command in the user's working directory. \
-            Allowed binaries: \(Self.allowedBinaries.sorted().joined(separator: ", ")). \
-            Pipes between allowed binaries are fine. Anything that writes, \
-            deletes, installs, or talks to the network is rejected.
+            Run a READ-ONLY command in the user's working directory. Pass \
+            argv as arrays (no shell). Allowed binaries: \
+            \(Self.allowedBinaries.sorted().joined(separator: ", ")). \
+            For a pipeline, list multiple stages. Anything that writes, \
+            deletes, installs, or reaches the network is rejected. \
+            Examples: {"pipeline":[["lsof","-i",":3000"]]} or \
+            {"pipeline":[["ls","-la"],["wc","-l"]]}.
             """,
             parameters: [
                 "type": "object",
                 "properties": [
-                    "command": [
-                        "type": "string",
-                        "description": "The shell command line to run.",
+                    "pipeline": [
+                        "type": "array",
+                        "description": "Stages; each stage is an argv array. Stages are piped left to right.",
+                        "items": [
+                            "type": "array",
+                            "items": ["type": "string"],
+                        ],
                     ],
                 ],
-                "required": ["command"],
+                "required": ["pipeline"],
             ])
     }
 
     func execute(arguments: [String: Any], cwd: String) async -> AgentToolResult {
-        guard let command = arguments["command"] as? String, !command.isEmpty else {
-            return AgentToolResult(ok: false, output: "missing command", display: "run_command: missing command")
+        guard let rawStages = arguments["pipeline"] as? [[String]], !rawStages.isEmpty else {
+            return AgentToolResult(ok: false, output: "missing pipeline (array of argv arrays)", display: "run_command: bad args")
         }
-        if let reason = Self.rejectionReason(for: command) {
-            return AgentToolResult(
-                ok: false,
-                output: "command rejected: \(reason)",
-                display: "拒绝: \(command) (\(reason))")
+        var stages: [ProcessRunner.Stage] = []
+        for argv in rawStages {
+            guard let first = argv.first, !first.isEmpty else {
+                return reject("empty argv stage", display: "run_command")
+            }
+            guard let path = Self.resolve(first) else {
+                return reject("'\(first)' is not in the read-only allowlist", display: displayString(rawStages))
+            }
+            if let bad = Self.dangerousFlags[first]?.first(where: { flag in
+                argv.contains { $0 == flag || $0.hasPrefix(flag + "=") }
+            }) {
+                return reject("'\(bad)' is not allowed for \(first)", display: displayString(rawStages))
+            }
+            if first == "git", let sub = argv.dropFirst().first(where: { !$0.hasPrefix("-") }),
+               !Self.gitSubcommands.contains(sub) {
+                return reject("git \(sub) is not a read-only subcommand", display: displayString(rawStages))
+            }
+            stages.append(.init(path: path, arguments: Array(argv.dropFirst())))
         }
-        let result = await ProcessRunner.run(
-            command: command, cwd: cwd, timeout: 10, outputLimit: 8_000)
+
+        let result = await ProcessRunner.run(pipeline: stages, cwd: cwd, timeout: 10, outputLimit: 8_000)
         return AgentToolResult(
             ok: result.exitCode == 0,
             output: result.output.isEmpty ? "(no output, exit \(result.exitCode))" : result.output,
-            display: command)
+            display: displayString(rawStages))
     }
 
-    /// nil = allowed. Checks every pipeline segment's first word.
-    static func rejectionReason(for command: String) -> String? {
-        let lowered = command.lowercased()
-        for pattern in blockedPatterns where lowered.contains(pattern) {
-            return "mutating git subcommand"
-        }
-        // Reject shell metacharacters that escape the read-only sandbox.
-        for forbidden in [">", ">>", "sudo", "$(", "`", "&&", ";", "||"] {
-            if command.contains(forbidden) { return "'\(forbidden)' not allowed" }
-        }
-        for segment in command.split(separator: "|") {
-            let first = segment.trimmingCharacters(in: .whitespaces)
-                .split(separator: " ").first.map(String.init) ?? ""
-            guard !first.isEmpty else { continue }
-            if !allowedBinaries.contains(first) {
-                return "'\(first)' is not in the read-only allowlist"
+    private func reject(_ reason: String, display: String) -> AgentToolResult {
+        AgentToolResult(ok: false, output: "command rejected: \(reason)", display: "拒绝: \(display) (\(reason))")
+    }
+
+    private func displayString(_ stages: [[String]]) -> String {
+        stages.map { $0.joined(separator: " ") }.joined(separator: " | ")
+    }
+
+    /// Absolute path for an allowlisted binary, or nil if not allowed /
+    /// not found. Never honors a caller-supplied path.
+    static func resolve(_ name: String) -> String? {
+        guard allowedBinaries.contains(name) else { return nil }
+        // Reject any path component — only bare names resolve.
+        guard !name.contains("/") else { return nil }
+        for dir in searchDirs {
+            let candidate = "\(dir)/\(name)"
+            if FileManager.default.isExecutableFile(atPath: candidate) {
+                return candidate
             }
         }
         return nil
@@ -168,41 +209,65 @@ struct ReadFileHead: AgentTool {
     }
 }
 
-/// Shared subprocess runner with timeout and output cap.
+/// Shared subprocess runner. Executes an argv pipeline directly — no
+/// shell is ever involved, so there is no metacharacter interpretation.
+/// Stages are chained with in-process pipes.
 enum ProcessRunner {
+    struct Stage {
+        var path: String       // absolute, allowlist-resolved
+        var arguments: [String]
+    }
+
     struct Result {
         var exitCode: Int32
         var output: String
     }
 
-    static func run(command: String, cwd: String, timeout: TimeInterval, outputLimit: Int) async -> Result {
+    static func run(pipeline: [Stage], cwd: String, timeout: TimeInterval, outputLimit: Int) async -> Result {
         await withCheckedContinuation { continuation in
             DispatchQueue.global().async {
-                let process = Process()
-                process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-                process.arguments = ["-c", command]
-                process.currentDirectoryURL = URL(fileURLWithPath: cwd)
-                let pipe = Pipe()
-                process.standardOutput = pipe
-                process.standardError = pipe
+                var processes: [Process] = []
+                let outputPipe = Pipe()
+                var previousOutput: Pipe? = nil
+
+                for (index, stage) in pipeline.enumerated() {
+                    let process = Process()
+                    process.executableURL = URL(fileURLWithPath: stage.path)
+                    process.arguments = stage.arguments
+                    process.currentDirectoryURL = URL(fileURLWithPath: cwd)
+                    if let previousOutput { process.standardInput = previousOutput }
+                    let isLast = index == pipeline.count - 1
+                    if isLast {
+                        process.standardOutput = outputPipe
+                        process.standardError = outputPipe
+                    } else {
+                        let stagePipe = Pipe()
+                        process.standardOutput = stagePipe
+                        previousOutput = stagePipe
+                    }
+                    processes.append(process)
+                }
 
                 do {
-                    try process.run()
+                    for process in processes { try process.run() }
                 } catch {
+                    processes.forEach { if $0.isRunning { $0.terminate() } }
                     continuation.resume(returning: Result(exitCode: -1, output: "failed to run: \(error.localizedDescription)"))
                     return
                 }
 
                 let deadline = DispatchTime.now() + timeout
                 DispatchQueue.global().asyncAfter(deadline: deadline) {
-                    if process.isRunning { process.terminate() }
+                    processes.forEach { if $0.isRunning { $0.terminate() } }
                 }
 
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                process.waitUntilExit()
+                let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
+                processes.forEach { $0.waitUntilExit() }
                 var output = String(decoding: data.prefix(outputLimit), as: UTF8.self)
                 if data.count > outputLimit { output += "\n… (output truncated)" }
-                continuation.resume(returning: Result(exitCode: process.terminationStatus, output: output))
+                continuation.resume(returning: Result(
+                    exitCode: processes.last?.terminationStatus ?? -1,
+                    output: output))
             }
         }
     }

@@ -97,7 +97,11 @@ open build/Build/Products/Debug/Pigeon.app   # 或从 Xcode 跑
 
 入口就是终端本身：输入合法命令照常执行；首词不是命令时 zsh 调 `command_not_found_handler`（构建时追加到打包的 shell integration，`scripts/pigeon-integration.zsh`），整行作为自然语言 curl 到 app 内的 AgentServer（常驻 localhost，端口经 surface env `PIGEON_AGENT_PORT` 注入），回答以 chunked 流直接打回 pty（工具行灰色 ANSI）。Ctrl+C 打断 curl 即取消。
 
-运行时架构抄 Pi 的设计语法（等效 Swift 实现在 `Agent/`）：ChatStreamClient 遵守"永不 throw"契约（错误编码进事件流）；AgentRuntime 是 ≤6 轮的顺序工具 loop；事件类型化（AgentEvent）。工具全部只读：run_command 走白名单（拒绝重定向/sudo/`;`/`&&` 等逃逸）、list_dir、read_file。单短词不触发 agent（多半是敲错命令）。DeepSeek 是一等公民（OpenAI 兼容 /chat/completions + SSE + function calling），任何同协议端点即插即用。
+运行时架构抄 Pi 的设计语法（等效 Swift 实现在 `Agent/`）：ChatStreamClient 遵守"永不 throw"契约（错误编码进事件流）；AgentRuntime 是 ≤6 轮的顺序工具 loop；事件类型化（AgentEvent）。工具全部只读。单短词不触发 agent（多半是敲错命令）。DeepSeek 是一等公民（OpenAI 兼容 /chat/completions + SSE + function calling），任何同协议端点即插即用。
+
+**安全（这两条是硬红线，别退回去）：**
+- **AgentServer 是本地 RCE 级端点，必须鉴权**。绑 127.0.0.1 不是信任边界 —— 浏览器标签页能 POST、DNS rebinding 能绕、本机其他进程能读。每个 `/ask` 请求必须：带每次启动新生成的 bearer token（`PIGEON_AGENT_TOKEN`，随端口一起注入 surface env，常量时间比较）、Host 精确等于 `127.0.0.1:<port>`/`localhost:<port>`、不带任何 Origin 头。三者缺一即 403。
+- **命令工具走 argv 数组 + 直接 Process exec，永不过 shell**。模型传 `{"pipeline":[["ls","-la"],["wc","-l"]]}`，每个元素是一个 exec 参数、逐字传递 —— 根本没有 shell 元字符/引号/注入面（黑名单过滤字符串是死路，别走回头路）。纵深防御：binary 只解析白名单里的裸名到绝对路径（`RunReadOnlyCommand.searchDirs`）；per-binary 危险 flag 拒绝（find 的 `-exec/-delete/...`、git 的 `-c/--exec-path/...`）；git 还要求子命令在只读白名单里。管道用 Swift `Pipe()` 串多个 Process，不交给 zsh。
 
 已知改进点：模型偶尔不听 plain-text 指令输出 markdown 星号；无确认机制的可变操作工具还没做（beforeToolCall 挂载点已留）。
 
