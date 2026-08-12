@@ -1,0 +1,32 @@
+diff --git a/include/ghostty.h b/include/ghostty.h
+index 3f1e0c9..c00e118 100644
+--- a/include/ghostty.h
++++ b/include/ghostty.h
+@@ -898,6 +898,7 @@ ghostty_config_t ghostty_config_new();
+ void ghostty_config_free(ghostty_config_t);
+ ghostty_config_t ghostty_config_clone(ghostty_config_t);
+ void ghostty_config_load_cli_args(ghostty_config_t);
++void ghostty_config_load_file(ghostty_config_t, const char*);
+ void ghostty_config_load_default_files(ghostty_config_t);
+ void ghostty_config_load_recursive_files(ghostty_config_t);
+ void ghostty_config_finalize(ghostty_config_t);
+diff --git a/src/config/CApi.zig b/src/config/CApi.zig
+index bdc5979..2a7e65a 100644
+--- a/src/config/CApi.zig
++++ b/src/config/CApi.zig
+@@ -61,6 +61,15 @@ export fn ghostty_config_load_cli_args(self: *Config) void {
+ /// Load the configuration from the default file locations. This
+ /// is usually done first. The default file locations are locations
+ /// such as the home directory.
++/// Load the configuration from an explicit file path. This lets
++/// embedders own their configuration location instead of inheriting
++/// the default XDG / Application Support search paths.
++export fn ghostty_config_load_file(self: *Config, path: [*:0]const u8) void {
++    self.loadFile(state.alloc, std.mem.sliceTo(path, 0)) catch |err| {
++        log.err("error loading config file err={}", .{err});
++    };
++}
++
+ export fn ghostty_config_load_default_files(self: *Config) void {
+     self.loadDefaultFiles(state.alloc) catch |err| {
+         log.err("error loading config err={}", .{err});

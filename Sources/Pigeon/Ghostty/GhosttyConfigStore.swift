@@ -5,13 +5,12 @@ extension Ghostty {
     /// Pigeon's own terminal (kernel) configuration, fully isolated from
     /// Ghostty.app's. Same file format, different file.
     ///
-    /// Isolation relies on a small patch we carry against libghostty
-    /// (patches/ghostty-config-override.patch): when the
-    /// GHOSTTY_CONFIG_OVERRIDE environment variable is set,
-    /// ghostty_config_load_default_files loads exactly that file and
-    /// nothing else. The earlier HOME/XDG env-swap approach was
-    /// non-deterministic — Foundation caches NSSearchPath results, so
-    /// whether the swap held depended on what AppKit had resolved first.
+    /// Isolation is a first-class kernel capability: our vendored patch
+    /// (patches/ghostty-embedder-api.patch) adds a real C API,
+    /// ghostty_config_load_file(config, path), so embedders own their
+    /// config location. No default-path search, no environment tricks
+    /// (an earlier HOME/XDG env swap broke non-deterministically because
+    /// Foundation caches NSSearchPath results).
     enum ConfigStore {
         /// The file users edit.
         static var configFileURL: URL {
@@ -59,16 +58,11 @@ extension Ghostty {
         }
 
         /// Build a finalized ghostty config from Pigeon's file.
-        /// Must be called on the main thread (mutates process env briefly).
         static func load() -> ghostty_config_t? {
             prepare()
             guard let config = ghostty_config_new() else { return nil }
-
-            setenv("GHOSTTY_CONFIG_OVERRIDE", configFileURL.path, 1)
-            ghostty_config_load_default_files(config)
+            ghostty_config_load_file(config, configFileURL.path)
             ghostty_config_load_recursive_files(config)
-            unsetenv("GHOSTTY_CONFIG_OVERRIDE")
-
             ghostty_config_finalize(config)
             return config
         }

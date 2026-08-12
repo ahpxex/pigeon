@@ -119,9 +119,36 @@ private struct TerminalWorkspace: View {
                 .accessibilityIdentifier("expandSidebarButton")
             }
         }
-        .background(ghostty.backgroundColor)
+        .background(ghostty.backgroundColor.opacity(ghostty.backgroundOpacity))
+        .background(WindowTransparencyConfigurator(opacity: ghostty.backgroundOpacity))
         .ignoresSafeArea()
         .frame(minWidth: 400, minHeight: 300)
+    }
+}
+
+/// background-opacity < 1 needs the NSWindow itself to be non-opaque;
+/// SwiftUI has no API for that, so reach the window through a hosted view.
+private struct WindowTransparencyConfigurator: NSViewRepresentable {
+    let opacity: Double
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async { configure(view.window) }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async { configure(nsView.window) }
+    }
+
+    private func configure(_ window: NSWindow?) {
+        guard let window else { return }
+        let translucent = opacity < 0.999
+        if window.isOpaque == translucent {
+            window.isOpaque = !translucent
+            window.backgroundColor = translucent ? .clear : nil
+            window.invalidateShadow()
+        }
     }
 }
 

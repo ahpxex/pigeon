@@ -116,6 +116,18 @@ extension Ghostty {
                 blue: Double(color.b) / 255)
         }
 
+        /// Configured background opacity; chrome and window transparency
+        /// follow it so the terminal and the chrome stay in step.
+        var backgroundOpacity: Double {
+            guard let config else { return 1 }
+            var value: Double = 1
+            let key = "background-opacity"
+            _ = withUnsafeMutablePointer(to: &value) { ptr in
+                ghostty_config_get(config, ptr, key, UInt(key.count))
+            }
+            return value
+        }
+
         /// Process pending libghostty work. Scheduled from the wakeup
         /// callback; must run on the main thread.
         func tick() {
