@@ -388,6 +388,13 @@ extension Ghostty {
                   window?.firstResponder === self
             else { return false }
 
+            // cmd+, belongs to the app (Settings…), never to the
+            // terminal — even though ghostty binds it to open_config.
+            if event.modifierFlags.contains(.command),
+               event.charactersIgnoringModifiers == "," {
+                return false
+            }
+
             let key = event.ghosttyKeyEvent(GHOSTTY_ACTION_PRESS)
             guard ghostty_surface_key_is_binding(surface, key) else { return false }
             _ = ghostty_surface_key(surface, key)

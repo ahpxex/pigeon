@@ -4,6 +4,8 @@ import GhosttyKit
 import SwiftUI
 
 extension Notification.Name {
+    /// Ask the SwiftUI layer to open the Settings scene.
+    static let pigeonOpenSettings = Notification.Name("pigeonOpenSettings")
     /// Request a new tab. Object is the originating SurfaceView (may be nil).
     static let pigeonNewTab = Notification.Name("pigeonNewTab")
     /// Request closing the tab that owns the SurfaceView in object.
@@ -121,6 +123,16 @@ extension Ghostty {
             ghostty_app_tick(app)
         }
 
+        /// Open the SwiftUI Settings scene. Routed through the SwiftUI
+        /// openSettings environment action (SettingsOpener in the view
+        /// tree); the legacy AppKit selectors no longer respond on
+        /// current macOS.
+        @MainActor
+        static func openSettingsWindow() {
+            NSApp.activate(ignoringOtherApps: true)
+            NotificationCenter.default.post(name: .pigeonOpenSettings, object: nil)
+        }
+
         /// Rebuild the config from Pigeon's file and push it to the app
         /// (propagates to all live surfaces).
         func reloadConfig() {
@@ -217,12 +229,9 @@ extension Ghostty {
                 return true
 
             case GHOSTTY_ACTION_OPEN_CONFIG:
-                DispatchQueue.main.async {
-                    // cmd+, in ghostty terms means "open config"; in Pigeon
-                    // that's the Settings window, which links to the file.
-                    if NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) { return }
-                    _ = NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
-                }
+                // "open config" in ghostty terms maps to Pigeon's
+                // Settings window.
+                DispatchQueue.main.async { App.openSettingsWindow() }
                 return true
 
             case GHOSTTY_ACTION_RING_BELL:

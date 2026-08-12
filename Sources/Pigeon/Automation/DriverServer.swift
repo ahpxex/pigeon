@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import GhosttyKit
 import Network
+import SwiftUI
 
 /// Debug automation server: lets an external agent drive Pigeon over
 /// localhost HTTP, Chrome-DevTools style. Only starts when the
@@ -345,6 +346,35 @@ final class DriverServer {
                 "width": workspace.sidebarWidth,
             ])
 
+        case ("GET", "/kernel"):
+            return HTTPResponse(json: kernelJSON())
+
+        case ("POST", "/kernel"):
+            guard let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any]
+            else { return HTTPResponse(status: 400, error: "body must be JSON") }
+            let kernel = KernelSettings.shared
+            if let v = json["fontFamily"] as? String { kernel.fontFamily = v }
+            if let v = json["fontSize"] as? Double { kernel.fontSize = v }
+            if let v = json["background"] as? String, let color = Color(hex: v) {
+                kernel.backgroundColor = color
+            }
+            if let v = json["foreground"] as? String, let color = Color(hex: v) {
+                kernel.foregroundColor = color
+            }
+            if let v = json["cursorStyle"] as? String,
+               let style = KernelSettings.CursorStyle(rawValue: v) {
+                kernel.cursorStyle = style
+            }
+            if let v = json["backgroundOpacity"] as? Double { kernel.backgroundOpacity = v }
+            kernel.apply()
+            return HTTPResponse(json: kernelJSON())
+
+        case ("POST", "/ui/open-settings"):
+            Ghostty.App.openSettingsWindow()
+            return HTTPResponse(json: [
+                "windows": NSApp.windows.filter(\.isVisible).map(\.windowNumber),
+            ])
+
         case ("POST", "/config/reload"):
             Ghostty.App.shared.reloadConfig()
             return HTTPResponse(json: ["ok": true, "path": Ghostty.ConfigStore.configFileURL.path])
@@ -377,6 +407,17 @@ final class DriverServer {
         default:
             return HTTPResponse(status: 404, error: "unknown endpoint \(request.method) \(request.path)")
         }
+    }
+
+    @MainActor
+    private func kernelJSON() -> [String: Any] {
+        let kernel = KernelSettings.shared
+        return [
+            "fontFamily": kernel.fontFamily,
+            "fontSize": kernel.fontSize,
+            "cursorStyle": kernel.cursorStyle.rawValue,
+            "backgroundOpacity": kernel.backgroundOpacity,
+        ]
     }
 
     @MainActor

@@ -94,7 +94,7 @@ scripts/pigeonctl quit
 - `GHOSTTY_ACTION_INITIAL_SIZE` / `CELL_SIZE` 被忽略，窗口不会按行列数吸附
 - 无 split、无多窗口管理、无设置界面；配置热重载未接（改 ghostty config 要重启）
 
-已有设置界面（⌘, 打开，SwiftUI Settings scene，`AppSettings` UserDefaults 持久化）：tab 标签风格（目录名/完整路径）、新 tab 图标分类、外观（系统/亮/暗，NSApp.appearance）、主题色（accent，影响选中行/拖放高亮/图标选中）。
+已有设置界面（⌘, 打开，SwiftUI Settings scene 分四个 Tab）：General（标签风格、图标分类，`AppSettings`）、Appearance（系统/亮/暗、主题色）、Terminal（内核 GUI 设置：字体/字号/前背景色/光标/不透明度，`KernelSettings` 写进配置文件末尾的 pigeon-settings 托管块并热重载，块外内容留给手改且被托管块覆盖）、Advanced（配置文件路径/打开/重载）。程序化打开设置窗口必须走 SwiftUI openSettings 环境动作（`SettingsOpener` 桥接 + `.pigeonOpenSettings` 通知）—— showSettingsWindow: 等老 selector 在 macOS 26 上已失效；cmd+, 在 performKeyEquivalent 里明确不给 ghostty（它默认绑成 open_config）。
 
 路线图（用户随时会调整）：splits → 多窗口 → 主题。
 

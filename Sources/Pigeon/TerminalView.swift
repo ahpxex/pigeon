@@ -1,6 +1,35 @@
 import SwiftUI
 import GhosttyKit
 
+/// Invisible bridge that exposes SwiftUI's openSettings action to AppKit
+/// land (ghostty actions, the driver) via a notification.
+private struct SettingsOpener: View {
+    var body: some View {
+        if #available(macOS 14.0, *) {
+            SettingsOpenerModern()
+        } else {
+            Color.clear
+                .frame(width: 0, height: 0)
+                .onReceive(NotificationCenter.default.publisher(for: .pigeonOpenSettings)) { _ in
+                    _ = NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+                }
+        }
+    }
+}
+
+@available(macOS 14.0, *)
+private struct SettingsOpenerModern: View {
+    @Environment(\.openSettings) private var openSettings
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .onReceive(NotificationCenter.default.publisher(for: .pigeonOpenSettings)) { _ in
+                openSettings()
+            }
+    }
+}
+
 /// Root view of the main window: vertical tab sidebar + terminal area,
 /// all painted with the terminal's configured background color so the
 /// window reads as a single surface.
@@ -8,6 +37,12 @@ struct TerminalView: View {
     @EnvironmentObject private var ghostty: Ghostty.App
 
     var body: some View {
+        content
+            .background(SettingsOpener())
+    }
+
+    @ViewBuilder
+    private var content: some View {
         switch ghostty.readiness {
         case .loading:
             ProgressView()
