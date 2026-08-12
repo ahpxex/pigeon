@@ -191,8 +191,9 @@ final class DriverServer {
                 "tabs": manager.tabs.map { tab in
                     [
                         "id": tab.id.uuidString,
-                        "title": tab.customTitle ?? tab.surfaceView.title,
+                        "title": tab.displayTitle,
                         "shellTitle": tab.surfaceView.title,
+                        "pwd": tab.surfaceView.pwd as Any,
                         "selected": tab.id == manager.selectedTabID,
                         "icon": tab.iconCode,
                         "groupId": tab.groupID?.uuidString as Any,

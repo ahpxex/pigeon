@@ -13,6 +13,9 @@ extension Ghostty {
             didSet { window?.title = title }
         }
 
+        /// Working directory reported by shell integration (OSC 7).
+        @Published var pwd: String?
+
         private(set) var surface: ghostty_surface_t?
 
         /// Accumulates text produced by interpretKeyEvents during keyDown

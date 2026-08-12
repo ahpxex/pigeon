@@ -187,6 +187,15 @@ extension Ghostty {
                 DispatchQueue.main.async { view.title = title }
                 return true
 
+            case GHOSTTY_ACTION_PWD:
+                guard target.tag == GHOSTTY_TARGET_SURFACE,
+                      let view = surfaceView(of: target.target.surface),
+                      let cPwd = action.action.pwd.pwd
+                else { return false }
+                let pwd = String(cString: cPwd)
+                DispatchQueue.main.async { view.pwd = pwd }
+                return true
+
             case GHOSTTY_ACTION_RING_BELL:
                 DispatchQueue.main.async { NSSound.beep() }
                 return true

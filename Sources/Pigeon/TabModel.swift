@@ -22,6 +22,20 @@ final class TerminalTab: Identifiable, ObservableObject {
         guard view.surface != nil else { return nil }
         self.surfaceView = view
     }
+
+    /// Sidebar label: custom name > working-directory folder > shell title.
+    var displayTitle: String {
+        if let customTitle { return customTitle }
+        if let pwd = surfaceView.pwd { return Self.folderLabel(pwd) }
+        return surfaceView.title
+    }
+
+    /// "~/code/pigeon" -> "pigeon", home itself -> "~".
+    static func folderLabel(_ pwd: String) -> String {
+        let abbreviated = (pwd as NSString).abbreviatingWithTildeInPath
+        if abbreviated == "~" { return "~" }
+        return (abbreviated as NSString).lastPathComponent
+    }
 }
 
 /// A collapsible section of tabs in the sidebar.
@@ -68,6 +82,13 @@ final class TabManager: ObservableObject {
         newTab()
     }
 
+    /// Tabs in the order the sidebar displays them: top level first,
+    /// then each group's members. cmd+1-9 and the held-cmd indicators
+    /// follow this order so what you see is what you jump to.
+    var visualOrderedTabs: [TerminalTab] {
+        ungroupedTabs + groups.flatMap { group in tabs.filter { $0.groupID == group.id } }
+    }
+
     @discardableResult
     func newTab() -> TerminalTab? {
         guard let app = Ghostty.App.shared.app,
@@ -75,6 +96,8 @@ final class TabManager: ObservableObject {
         else { return nil }
         // A tab opened while a grouped tab is selected joins that group.
         tab.groupID = selectedTab?.groupID
+        // Keep icons distinct across open tabs.
+        tab.iconCode = TabIcon.random(excluding: Set(tabs.map(\.iconCode)))
         tabs.append(tab)
         selectedTabID = tab.id
         return tab
@@ -135,6 +158,12 @@ final class TabManager: ObservableObject {
     }
 
     func select(_ tab: TerminalTab) {
+        // Selecting a tab hidden in a collapsed group reveals it.
+        if let groupID = tab.groupID,
+           let group = groups.first(where: { $0.id == groupID }),
+           !group.isExpanded {
+            toggleExpanded(group)
+        }
         selectedTabID = tab.id
     }
 
@@ -187,23 +216,26 @@ final class TabManager: ObservableObject {
     }
 
     @objc private func handleGotoTab(_ notification: Notification) {
+        let ordered = visualOrderedTabs
         guard let raw = notification.userInfo?["goto"] as? Int32,
+              !ordered.isEmpty,
               let current = selectedTab,
-              let index = tabs.firstIndex(where: { $0.id == current.id })
+              let index = ordered.firstIndex(where: { $0.id == current.id })
         else { return }
 
         switch ghostty_action_goto_tab_e(raw) {
         case GHOSTTY_GOTO_TAB_PREVIOUS:
-            selectedTabID = tabs[(index + tabs.count - 1) % tabs.count].id
+            select(ordered[(index + ordered.count - 1) % ordered.count])
         case GHOSTTY_GOTO_TAB_NEXT:
-            selectedTabID = tabs[(index + 1) % tabs.count].id
+            select(ordered[(index + 1) % ordered.count])
         case GHOSTTY_GOTO_TAB_LAST:
-            selectedTabID = tabs.last?.id
+            if let last = ordered.last { select(last) }
         default:
-            // Positive values are 1-based tab indices (cmd+1 ... cmd+9).
+            // Positive values are 1-based tab indices (cmd+1 ... cmd+9),
+            // counted in sidebar display order.
             let target = Int(raw) - 1
-            guard tabs.indices.contains(target) else { return }
-            selectedTabID = tabs[target].id
+            guard ordered.indices.contains(target) else { return }
+            select(ordered[target])
         }
     }
 }

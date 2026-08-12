@@ -83,7 +83,7 @@ scripts/pigeonctl quit
 
 ## 当前状态与路线图
 
-已实现：垂直 Tab 侧边栏（多 tab、切换保活、关闭、拖拽排序（组内）、右键重命名（customTitle 覆盖 shell 标题）、cmd+T/W、cmd+1-9 走 ghostty 键位；拖拽调宽 160-420、拖到 <120 或 ⌥⌘S 折叠，状态持久化在 UserDefaults，`WorkspaceState`）、窗口配色与终端主题统一（hiddenTitleBar 全铺背景色）、分组（TabGroup：折叠/改名/删除，右键 Move to Group，侧边栏空白处单击新建组并行内命名（空名=取消），拖拽 tab 到组头或组区域直接入组（高亮提示），组内拖拽排序，空组保留到手动删除）、OpenMoji tab 图标（56 个精选 128px PNG 打进 bundle，新 tab 随机分配，右键 Change Icon 弹网格选择器；OpenMoji CC BY-SA 4.0 需保留署名）、驱动服务与 pigeonctl、键盘（含基本 IME preedit）、鼠标、剪贴板、标题、光标形状、bell、URL 打开、Ghostty 配置加载。
+已实现：垂直 Tab 侧边栏（多 tab、切换保活、关闭、拖拽排序（组内）、右键重命名（customTitle 覆盖 shell 标题）、cmd+T/W、cmd+1-9 走 ghostty 键位；拖拽调宽 160-420、拖到 <120 或 ⌥⌘S 折叠，状态持久化在 UserDefaults，`WorkspaceState`）、窗口配色与终端主题统一（hiddenTitleBar 全铺背景色）、分组（TabGroup：折叠/改名/删除，右键 Move to Group，侧边栏空白处单击新建组并行内命名（空名=取消），拖拽 tab 到组头或组区域直接入组（高亮提示），组内拖拽排序，空组保留到手动删除）、OpenMoji tab 图标（56 个精选 128px PNG 分五类打进 bundle，新 tab 随机分配且避开在用图标，右键 Change Icon 弹分类网格选择器；OpenMoji CC BY-SA 4.0 需保留署名）、驱动服务与 pigeonctl、键盘（含基本 IME preedit）、鼠标、剪贴板、标题（默认显示 OSC 7 上报的目录名，custom rename 优先）、按住 ⌘ 显示 tab 跳转序号（cmd+1-9 按侧边栏视觉顺序）、光标形状、bell、URL 打开、Ghostty 配置加载。
 
 已知简化（做功能时优先补这些）：
 - 剪贴板读取确认（OSC 52）目前直接放行，没有像 Ghostty 那样弹确认框

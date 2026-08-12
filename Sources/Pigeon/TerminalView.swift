@@ -153,6 +153,10 @@ private struct TabSidebar: View {
     /// Group whose name is being edited because it was just created.
     @State private var editingGroupID: TabGroup.ID? = nil
 
+    /// True while the command key is down: rows show their ⌘N jump badge.
+    @State private var commandHeld = false
+    @State private var flagsMonitor: Any? = nil
+
     private let rowSpacing: CGFloat = 2
 
     var body: some View {
@@ -207,6 +211,16 @@ private struct TabSidebar: View {
             }
             .coordinateSpace(name: "sidebarList")
             .onPreferenceChange(SidebarRowFramesKey.self) { rowFrames = $0 }
+            .onAppear {
+                flagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { event in
+                    commandHeld = event.modifierFlags.contains(.command)
+                    return event
+                }
+            }
+            .onDisappear {
+                if let flagsMonitor { NSEvent.removeMonitor(flagsMonitor) }
+                flagsMonitor = nil
+            }
 
             Spacer(minLength: 0)
 
@@ -257,13 +271,22 @@ private struct TabSidebar: View {
 
     // MARK: Reordering
 
+    /// 1-based ⌘N badge position (visual order), only for the first 9.
+    private func shortcutNumber(for tab: TerminalTab) -> Int? {
+        guard let index = tabManager.visualOrderedTabs.firstIndex(where: { $0.id == tab.id }),
+              index < 9
+        else { return nil }
+        return index + 1
+    }
+
     @ViewBuilder
     private func decoratedRow(for tab: TerminalTab) -> some View {
         TabRow(
             tab: tab,
             surfaceView: tab.surfaceView,
             isSelected: tab.id == tabManager.selectedTabID,
-            isOnlyTab: tabManager.tabs.count == 1)
+            isOnlyTab: tabManager.tabs.count == 1,
+            shortcutNumber: commandHeld ? shortcutNumber(for: tab) : nil)
         .background(rowHeightReader)
         .background(frameReader(for: .tab(tab.id)))
         .offset(y: rowOffset(for: tab))
@@ -526,6 +549,8 @@ private struct TabRow: View {
     @ObservedObject var surfaceView: Ghostty.SurfaceView
     let isSelected: Bool
     let isOnlyTab: Bool
+    /// Set while the command key is held: shows the ⌘N jump badge.
+    let shortcutNumber: Int?
 
     @EnvironmentObject private var ghostty: Ghostty.App
     @ObservedObject private var tabState: TerminalTab
@@ -534,16 +559,23 @@ private struct TabRow: View {
     @State private var draftTitle = ""
     @FocusState private var renameFieldFocused: Bool
 
-    init(tab: TerminalTab, surfaceView: Ghostty.SurfaceView, isSelected: Bool, isOnlyTab: Bool) {
+    init(
+        tab: TerminalTab,
+        surfaceView: Ghostty.SurfaceView,
+        isSelected: Bool,
+        isOnlyTab: Bool,
+        shortcutNumber: Int? = nil
+    ) {
         self.tab = tab
         self.surfaceView = surfaceView
         self.isSelected = isSelected
         self.isOnlyTab = isOnlyTab
+        self.shortcutNumber = shortcutNumber
         self.tabState = tab
     }
 
     private var displayTitle: String {
-        tabState.customTitle ?? surfaceView.title
+        tab.displayTitle
     }
 
     @State private var showingIconPicker = false
@@ -579,9 +611,14 @@ private struct TabRow: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .help(surfaceView.pwd ?? surfaceView.title)
             }
 
-            if hovering && !isOnlyTab && !renaming {
+            if let shortcutNumber {
+                Text("⌘\(shortcutNumber)")
+                    .font(.system(size: 10, weight: .medium).monospacedDigit())
+                    .opacity(0.55)
+            } else if hovering && !isOnlyTab && !renaming {
                 Button {
                     TabManager.shared.close(tab)
                 } label: {
@@ -609,7 +646,7 @@ private struct TabRow: View {
         .contextMenu {
             Button("Rename") { startRename() }
             if tabState.customTitle != nil {
-                Button("Use Shell Title") {
+                Button("Use Default Title") {
                     tabState.customTitle = nil
                 }
             }
@@ -679,33 +716,47 @@ private struct IconPicker: View {
 
     var body: some View {
         ScrollView {
-            LazyVGrid(columns: columns, spacing: 4) {
-                ForEach(TabIcon.codes, id: \.self) { code in
-                    Button {
-                        tab.iconCode = code
-                        dismiss()
-                    } label: {
-                        Group {
-                            if let image = TabIcon.image(for: code) {
-                                Image(nsImage: image)
-                                    .resizable()
-                                    .interpolation(.high)
-                                    .frame(width: 22, height: 22)
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(TabIcon.categories) { category in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(category.name)
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.leading, 2)
+                        LazyVGrid(columns: columns, spacing: 4) {
+                            ForEach(category.codes, id: \.self) { code in
+                                iconButton(for: code)
                             }
                         }
-                        .frame(width: 28, height: 28)
-                        .background(
-                            RoundedRectangle(cornerRadius: 5)
-                                .fill(tab.iconCode == code
-                                    ? Color.accentColor.opacity(0.3)
-                                    : Color.clear))
                     }
-                    .buttonStyle(.plain)
                 }
             }
             .padding(10)
         }
-        .frame(width: 8 * 32 + 20, height: 240)
+        .frame(width: 8 * 32 + 20, height: 280)
+    }
+
+    private func iconButton(for code: String) -> some View {
+        Button {
+            tab.iconCode = code
+            dismiss()
+        } label: {
+            Group {
+                if let image = TabIcon.image(for: code) {
+                    Image(nsImage: image)
+                        .resizable()
+                        .interpolation(.high)
+                        .frame(width: 22, height: 22)
+                }
+            }
+            .frame(width: 28, height: 28)
+            .background(
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(tab.iconCode == code
+                        ? Color.accentColor.opacity(0.3)
+                        : Color.clear))
+        }
+        .buttonStyle(.plain)
     }
 }
 
