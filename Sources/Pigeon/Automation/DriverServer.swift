@@ -378,7 +378,24 @@ final class DriverServer {
 
         case ("POST", "/config/reload"):
             Ghostty.App.shared.reloadConfig()
-            return HTTPResponse(json: ["ok": true, "path": Ghostty.ConfigStore.configFileURL.path])
+            var fontSize: Float = -1
+            var family: UnsafePointer<CChar>? = nil
+            if let config = Ghostty.App.shared.config {
+                let sizeKey = "font-size"
+                _ = withUnsafeMutablePointer(to: &fontSize) {
+                    ghostty_config_get(config, $0, sizeKey, UInt(sizeKey.count))
+                }
+                let familyKey = "font-family"
+                _ = withUnsafeMutablePointer(to: &family) {
+                    ghostty_config_get(config, $0, familyKey, UInt(familyKey.count))
+                }
+            }
+            return HTTPResponse(json: [
+                "ok": true,
+                "path": Ghostty.ConfigStore.configFileURL.path,
+                "configFontSize": Double(fontSize),
+                "configFontFamily": family.map { String(cString: $0) } as Any,
+            ])
 
         case ("GET", "/settings"):
             return HTTPResponse(json: settingsJSON())

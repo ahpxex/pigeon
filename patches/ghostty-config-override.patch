@@ -1,0 +1,21 @@
+diff --git a/src/config/Config.zig b/src/config/Config.zig
+index 788a195..c89a089 100644
+--- a/src/config/Config.zig
++++ b/src/config/Config.zig
+@@ -3379,6 +3379,16 @@ fn writeConfigTemplate(path: []const u8) !void {
+ /// On macOS, `$HOME/Library/Application Support/$CFBundleIdentifier/config`
+ /// is also loaded.
+ pub fn loadDefaultFiles(self: *Config, alloc: Allocator) !void {
++    // Pigeon patch: embedders can point the default-config search at a
++    // single explicit file, bypassing the XDG and App Support paths
++    // entirely. This is what keeps Pigeon's config isolated from
++    // Ghostty.app's without relying on fragile HOME/XDG env swaps.
++    if (std.process.getEnvVarOwned(alloc, "GHOSTTY_CONFIG_OVERRIDE")) |override_path| {
++        defer alloc.free(override_path);
++        _ = self.loadOptionalFile(alloc, override_path);
++        return;
++    } else |_| {}
++
+     // Load XDG first
+     const xdg_path = try defaultXdgPath(alloc);
+     defer alloc.free(xdg_path);

@@ -31,8 +31,11 @@ final class KernelSettings: ObservableObject {
         }
     }
 
-    /// Empty string = system default font.
-    @Published var fontFamily: String = ""
+    /// Empty string = system default font. Persisted in defaults because
+    /// repeatable config keys can't be read back through ghostty_config_get.
+    @Published var fontFamily: String = "" {
+        didSet { UserDefaults.standard.set(fontFamily, forKey: "kernelFontFamily") }
+    }
     @Published var fontSize: Double = 13
     /// TerminalTheme id; nil = whatever the config file says.
     @Published var themeID: String? {
@@ -62,17 +65,15 @@ final class KernelSettings: ObservableObject {
 
     private init() {
         themeID = UserDefaults.standard.string(forKey: "kernelThemeID")
+        fontFamily = UserDefaults.standard.string(forKey: "kernelFontFamily") ?? ""
         loadFromConfig()
     }
 
     /// Read current effective values from the loaded ghostty config.
+    /// (font-family is a repeatable key that config_get can't return;
+    /// the GUI selection persists in defaults instead.)
     func loadFromConfig() {
         guard let config = Ghostty.App.shared.config else { return }
-
-        var family: UnsafePointer<CChar>? = nil
-        if key("font-family", into: &family, config: config), let family {
-            fontFamily = String(cString: family)
-        }
 
         var size: Float = 13
         if key("font-size", into: &size, config: config) {
@@ -111,6 +112,10 @@ final class KernelSettings: ObservableObject {
     func apply() {
         var lines = ["", Self.beginMarker]
         if !fontFamily.trimmingCharacters(in: .whitespaces).isEmpty {
+            // font-family is a repeatable key (fallback list); an empty
+            // value resets the list so the chosen family actually leads
+            // instead of being appended as a fallback.
+            lines.append("font-family = ")
             lines.append("font-family = \(fontFamily)")
         }
         lines.append("font-size = \(formatNumber(fontSize))")

@@ -31,6 +31,20 @@ if [ ! -d "$ROOT/vendor/ghostty" ]; then
     https://github.com/ghostty-org/ghostty.git "$ROOT/vendor/ghostty"
 fi
 
+# Pigeon-local patches (config isolation, see patches/*.patch).
+for patch in "$ROOT"/patches/*.patch; do
+  [ -e "$patch" ] || continue
+  if ! git -C "$ROOT/vendor/ghostty" apply --check "$patch" 2>/dev/null; then
+    if git -C "$ROOT/vendor/ghostty" apply --reverse --check "$patch" 2>/dev/null; then
+      continue  # already applied
+    fi
+    echo "patch does not apply cleanly: $patch" >&2
+    exit 1
+  fi
+  git -C "$ROOT/vendor/ghostty" apply "$patch"
+  echo "applied: $patch"
+done
+
 "$ROOT/scripts/fetch-ghostty-deps.sh"
 "$ROOT/scripts/build-ghostty.sh"
 

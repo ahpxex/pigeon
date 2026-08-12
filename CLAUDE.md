@@ -32,7 +32,7 @@ vendor/                      # 全部 gitignore，由 scripts/setup.sh 重建
 - **事件循环**：libghostty 的 `wakeup_cb` 可能从任意线程来，必须 dispatch 到主线程再调 `ghostty_app_tick`。所有 action 回调里碰 AppKit 的代码同样要回主线程。
 - **回调 userdata 约定**：app 级回调的 userdata 是 `Ghostty.App`，surface 级回调（clipboard、close_surface）的 userdata 是 `SurfaceView`。从 `ghostty_surface_t` 反查视图用 `ghostty_surface_userdata`。
 - **键盘**：keyDown 先过 `interpretKeyEvents`（走 IME），把产生的文本挂到 key event 的 `text` 字段再交给 `ghostty_surface_key`；cmd 组合键走 `performKeyEquivalent`，先用 `ghostty_surface_key_is_binding` 探测，不是 binding 就放行给菜单。
-- **配置**：Pigeon 有独立的内核配置 `~/.config/pigeon/config`（Ghostty 格式，首启从 Ghostty 配置导入一次做起点，之后互不影响）。libghostty 没有指定路径加载的 C API，`GhosttyConfigStore` 在加载瞬间把 HOME/XDG_CONFIG_HOME 指向私有沙盒（内含指向真实文件的 symlink），加载完还原，finalize 在还原后做（保证 ~ 展开正确）。支持热重载：设置里的 Reload 按钮、ghostty 键位 reload_config、驱动 /config/reload 都走 `ghostty_app_update_config`。
+- **配置**：Pigeon 有独立的内核配置 `~/.config/pigeon/config`（Ghostty 格式，首启从 Ghostty 配置导入一次做起点，之后互不影响）。libghostty 没有指定路径加载的 C API，我们给它打了个小补丁（`patches/ghostty-config-override.patch`，setup.sh 自动应用）：设置 GHOSTTY_CONFIG_OVERRIDE 环境变量时 load_default_files 只读那一个文件。⚠️ 别退回 HOME/XDG env-swap 方案：Foundation 会缓存 NSSearchPath 结果，AppKit 用真实 HOME 解析过一次后 swap 就失效，表现为"配置隔离时好时坏"。支持热重载：设置里的 Reload 按钮、ghostty 键位 reload_config、驱动 /config/reload 都走 `ghostty_app_update_config`。
 - **窗口配色**：hiddenTitleBar + 全窗口铺 `ghostty_config_get("background")` 读出的终端背景色；侧边栏是前景色 6% 透明度的浮层。刻意不用 NavigationSplitView（它的毛玻璃透出的是桌面，和终端色对不上）。
 - **Tabs**：`TabManager.shared` 持有 tab 列表；每个 tab 的 SurfaceView 常驻视图树（ZStack + opacity 切换），shell 进程不因切走而中断。ghostty 键位（cmd+T/W、cmd+1-9、cmd+shift+[]）通过 action 回调 → NotificationCenter（`.pigeonNewTab` 等）→ TabManager。close_surface（进程退出）同样走关 tab 路径，最后一个 tab 关掉时关窗口。
 - **文本注入有两条通道**：`ghostty_surface_text` 走粘贴路径（bracketed paste，控制字符不会被执行！），`ghostty_surface_key` 走按键编码路径。模拟"按回车"必须用后者 —— DriverServer 的 /input/text vs /input/key 就是这两条。
@@ -104,4 +104,5 @@ scripts/pigeonctl quit
 - 与 libghostty 的一切交互收敛在 `Sources/Pigeon/Ghostty/` 里，UI 层不直接碰 C API。
 - 参考实现永远看 `vendor/ghostty/macos/Sources/Ghostty/`（Ghostty 官方 Swift 封装，功能齐全）；Pigeon 的封装是它的精简版，补功能时先读它怎么做。
 - C 字符串生命周期：`ghostty_input_key_s.text` 等指针字段只在 `withCString` 闭包内有效，不要存。
-- 升级 Ghostty：改 `scripts/setup.sh` 里的 `GHOSTTY_TAG`，重跑 fetch + build，然后对着 `include/ghostty.h` 的 diff 修编译错误。
+- 升级 Ghostty：改 `scripts/setup.sh` 里的 `GHOSTTY_TAG`，重跑 fetch + build，然后对着 `include/ghostty.h` 的 diff 修编译错误；确认 `patches/` 下的补丁还能干净应用。
+- `font-family` 是可重复键（回退链）：GUI 切换字体要先写 `font-family = `（空值重置列表）再写新值，否则只是追加 fallback 永远不生效；这类键也无法用 ghostty_config_get 读回，GUI 状态存 UserDefaults。
