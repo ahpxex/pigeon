@@ -23,10 +23,16 @@ final class TerminalTab: Identifiable, ObservableObject {
         self.surfaceView = view
     }
 
-    /// Sidebar label: custom name > working-directory folder > shell title.
+    /// Sidebar label: custom name > working directory > shell title.
+    @MainActor
     var displayTitle: String {
         if let customTitle { return customTitle }
-        if let pwd = surfaceView.pwd { return Self.folderLabel(pwd) }
+        if let pwd = surfaceView.pwd {
+            switch AppSettings.shared.labelStyle {
+            case .folderName: return Self.folderLabel(pwd)
+            case .fullPath: return (pwd as NSString).abbreviatingWithTildeInPath
+            }
+        }
         return surfaceView.title
     }
 
@@ -97,7 +103,9 @@ final class TabManager: ObservableObject {
         // A tab opened while a grouped tab is selected joins that group.
         tab.groupID = selectedTab?.groupID
         // Keep icons distinct across open tabs.
-        tab.iconCode = TabIcon.random(excluding: Set(tabs.map(\.iconCode)))
+        tab.iconCode = TabIcon.random(
+            excluding: Set(tabs.map(\.iconCode)),
+            category: AppSettings.shared.iconCategory)
         tabs.append(tab)
         selectedTabID = tab.id
         return tab

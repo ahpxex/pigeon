@@ -25,6 +25,9 @@ import Network
 ///   GET  /text[?id=...]     -> raw screen text of the tab (default: selected)
 ///   GET  /sidebar           -> {collapsed, width}
 ///   POST /sidebar           <- {"collapsed": bool?, "width": number?}
+///   GET  /settings          -> {labelStyle, iconCategory, appearance, accentHex}
+///   POST /settings          <- partial update of the same keys
+///                              (iconCategory/accentHex accept null)
 final class DriverServer {
     static let shared = DriverServer()
 
@@ -342,9 +345,45 @@ final class DriverServer {
                 "width": workspace.sidebarWidth,
             ])
 
+        case ("GET", "/settings"):
+            return HTTPResponse(json: settingsJSON())
+
+        case ("POST", "/settings"):
+            guard let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any]
+            else { return HTTPResponse(status: 400, error: "body must be JSON") }
+            let settings = AppSettings.shared
+            if let raw = json["labelStyle"] as? String {
+                guard let style = AppSettings.LabelStyle(rawValue: raw)
+                else { return HTTPResponse(status: 400, error: "bad labelStyle") }
+                settings.labelStyle = style
+            }
+            if json.keys.contains("iconCategory") {
+                settings.iconCategory = json["iconCategory"] as? String
+            }
+            if let raw = json["appearance"] as? String {
+                guard let appearance = AppSettings.Appearance(rawValue: raw)
+                else { return HTTPResponse(status: 400, error: "bad appearance") }
+                settings.appearance = appearance
+            }
+            if json.keys.contains("accentHex") {
+                settings.accentHex = json["accentHex"] as? String
+            }
+            return HTTPResponse(json: settingsJSON())
+
         default:
             return HTTPResponse(status: 404, error: "unknown endpoint \(request.method) \(request.path)")
         }
+    }
+
+    @MainActor
+    private func settingsJSON() -> [String: Any] {
+        let settings = AppSettings.shared
+        return [
+            "labelStyle": settings.labelStyle.rawValue,
+            "iconCategory": settings.iconCategory as Any,
+            "appearance": settings.appearance.rawValue,
+            "accentHex": settings.accentHex as Any,
+        ]
     }
 
     /// Named keys for /input/key. Keycodes are macOS virtual keycodes.

@@ -33,5 +33,9 @@ struct PigeonApp: App {
                 .keyboardShortcut("s", modifiers: [.command, .option])
             }
         }
+
+        Settings {
+            SettingsView()
+        }
     }
 }

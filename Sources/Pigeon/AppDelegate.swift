@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // never shows a window; force regular activation.
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+        AppSettings.shared.applyAppearance()
         DriverServer.shared.startIfConfigured()
     }
 

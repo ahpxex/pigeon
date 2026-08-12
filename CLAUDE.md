@@ -70,7 +70,8 @@ scripts/pigeonctl key enter|escape|tab|up|down|ctrl-c|...
 scripts/pigeonctl text            # 读回整屏文本 —— 断言用这个
 scripts/pigeonctl sidebar [show|hide|<width>]  # 侧边栏状态/折叠/宽度
 scripts/pigeonctl move <id> <index> / rename <id> <名字>  # 排序、重命名（空名字恢复 shell 标题）
-scripts/pigeonctl icon <id> <code> / group-new <名字> / group-assign <tabid> <groupid|none> / group-expand <id> <true|false>|none>
+scripts/pigeonctl icon <id> <code> / group-new <名字> / group-assign <tabid> <groupid|none> / group-expand <id> <true|false>
+scripts/pigeonctl settings ['{"labelStyle":"fullPath"}']   # 读/改设置（labelStyle iconCategory appearance accentHex）|none> / group-expand <id> <true|false>|none>
 scripts/pigeonctl screenshot x.png# 用 state 里的 windowNumber 精确截窗口
 scripts/pigeonctl quit
 ```
@@ -92,7 +93,9 @@ scripts/pigeonctl quit
 - `GHOSTTY_ACTION_INITIAL_SIZE` / `CELL_SIZE` 被忽略，窗口不会按行列数吸附
 - 无 split、无多窗口管理、无设置界面；配置热重载未接（改 ghostty config 要重启）
 
-路线图（用户随时会调整）：splits → 设置界面 → 多窗口 → 主题。
+已有设置界面（⌘, 打开，SwiftUI Settings scene，`AppSettings` UserDefaults 持久化）：tab 标签风格（目录名/完整路径）、新 tab 图标分类、外观（系统/亮/暗，NSApp.appearance）、主题色（accent，影响选中行/拖放高亮/图标选中）。
+
+路线图（用户随时会调整）：splits → 多窗口 → 主题。
 
 ## 约定
 

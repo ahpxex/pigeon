@@ -78,6 +78,13 @@ case "$1" in
     screencapture -x -o -l "$win" "$out"
     echo "$out"
     ;;
+  settings)
+    if [ -z "$2" ]; then
+      curl -sf "$BASE/settings"
+    else
+      curl -sf -X POST --data "$2" "$BASE/settings"
+    fi
+    ;;
   quit)       pkill -x Pigeon ;;
   *)
     sed -n '2,15p' "$0" >&2

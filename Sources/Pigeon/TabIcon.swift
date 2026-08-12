@@ -36,11 +36,12 @@ enum TabIcon {
 
     static let codes: [String] = categories.flatMap(\.codes)
 
-    /// Random icon, avoiding codes already in use when possible so
-    /// every tab stays visually distinct.
-    static func random(excluding used: Set<String> = []) -> String {
-        let available = codes.filter { !used.contains($0) }
-        return (available.isEmpty ? codes : available).randomElement() ?? "1F54A"
+    /// Random icon, avoiding codes already in use when possible so every
+    /// tab stays visually distinct. A category name narrows the pool.
+    static func random(excluding used: Set<String> = [], category: String? = nil) -> String {
+        let pool = categories.first { $0.name == category }?.codes ?? codes
+        let available = pool.filter { !used.contains($0) }
+        return (available.isEmpty ? pool : available).randomElement() ?? "1F54A"
     }
 
     private static var cache: [String: NSImage] = [:]

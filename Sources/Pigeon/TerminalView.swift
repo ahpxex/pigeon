@@ -491,7 +491,8 @@ private struct GroupHeaderRow: View {
         .foregroundStyle(ghostty.foregroundColor.opacity(hovering ? 0.8 : 0.55))
         .background(
             RoundedRectangle(cornerRadius: 6)
-                .fill(Color.accentColor.opacity(isDropTarget ? 0.25 : 0)))
+                .fill((AppSettings.shared.accentColor ?? Color.accentColor)
+                    .opacity(isDropTarget ? 0.25 : 0)))
         .contentShape(Rectangle())
         .onTapGesture {
             guard !renaming else { return }
@@ -554,6 +555,7 @@ private struct TabRow: View {
 
     @EnvironmentObject private var ghostty: Ghostty.App
     @ObservedObject private var tabState: TerminalTab
+    @ObservedObject private var settings = AppSettings.shared
     @State private var hovering = false
     @State private var renaming = false
     @State private var draftTitle = ""
@@ -635,8 +637,7 @@ private struct TabRow: View {
         .foregroundStyle(ghostty.foregroundColor.opacity(isSelected ? 1 : 0.6))
         .background(
             RoundedRectangle(cornerRadius: 6)
-                .fill(ghostty.foregroundColor.opacity(
-                    isSelected ? 0.15 : (hovering ? 0.07 : 0))))
+                .fill(selectionFill))
         .contentShape(Rectangle())
         // Single tap only: a double-tap gesture here would force SwiftUI
         // to hold every click for the double-click interval, making tab
@@ -678,6 +679,16 @@ private struct TabRow: View {
         .popover(isPresented: $showingIconPicker, arrowEdge: .trailing) {
             IconPicker(tab: tabState)
         }
+    }
+
+    /// Selection uses the user's accent color when set; neutral
+    /// foreground tint otherwise.
+    private var selectionFill: Color {
+        if isSelected {
+            if let accent = settings.accentColor { return accent.opacity(0.3) }
+            return ghostty.foregroundColor.opacity(0.15)
+        }
+        return ghostty.foregroundColor.opacity(hovering ? 0.07 : 0)
     }
 
     private func startRename() {
@@ -753,7 +764,7 @@ private struct IconPicker: View {
             .background(
                 RoundedRectangle(cornerRadius: 5)
                     .fill(tab.iconCode == code
-                        ? Color.accentColor.opacity(0.3)
+                        ? (AppSettings.shared.accentColor ?? Color.accentColor).opacity(0.3)
                         : Color.clear))
         }
         .buttonStyle(.plain)
