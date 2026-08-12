@@ -184,15 +184,21 @@ private struct TabSidebar: View {
                         }
                         .padding(.horizontal, 8)
 
-                        // Blank space below the rows: click to start a new
-                        // group, named inline. Cancelling removes it again.
+                        // Blank space below the rows: right-click for the
+                        // sidebar menu. New groups name themselves inline;
+                        // cancelling the name removes the group again.
                         Color.clear
                             .frame(maxWidth: .infinity)
                             .frame(minHeight: 44, maxHeight: .infinity)
                             .contentShape(Rectangle())
-                            .onTapGesture {
-                                let group = tabManager.createGroup(named: "")
-                                editingGroupID = group.id
+                            .contextMenu {
+                                Button("New Group") {
+                                    let group = tabManager.createGroup(named: "")
+                                    editingGroupID = group.id
+                                }
+                                Button("New Tab") {
+                                    tabManager.newTab()
+                                }
                             }
                             .accessibilityIdentifier("sidebarBlankArea")
                     }
