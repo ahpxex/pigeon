@@ -1,6 +1,15 @@
 # Pigeon
 
-Pigeon 是一个 macOS 原生终端模拟器：SwiftUI 外壳 + libghostty（Ghostty 的核心库）作为终端内核。libghostty 负责 VT 解析、PTY、字体渲染（Metal，自带渲染线程）；Swift 层只负责窗口、输入事件转发和系统集成。
+Pigeon 是一个 macOS 原生的 **agentic 终端模拟器**：SwiftUI 外壳 + libghostty（Ghostty 的核心库）作为终端内核。libghostty 负责 VT 解析、PTY、字体渲染（Metal，自带渲染线程）；Swift 层负责窗口、输入事件转发、系统集成，以及 Pigeon 的差异化能力 —— 内置 Agent。
+
+## 产品定位
+
+Pigeon 的特色是"终端自带一个轻量 Agent"。设计边界要牢记：
+
+- **不是** Claude Code / Codex 那种强 Agent 的替代品，不做多步规划、不做大型代码改造。
+- 目标是那些"为它专门开一个强 Agent 太重"的日常小任务：看看这个目录里有什么、帮我找某个文件、整理一下这个目录、看看 3000 端口跑的是什么进程、这条报错什么意思……一句话进，一个动作或一句答案出。
+- 用户在设置的 Agent Tab 配置 AI Provider（内置 Anthropic/OpenAI/DeepSeek + 自定义 OpenAI 兼容端点），模型可选、API key 按 Provider 独立存 Keychain —— 这套配置就是给内置 Agent 用的。
+- 由此推论：实现上优先低延迟、低成本（小模型可用）、单轮或极少轮工具调用；宁可把任务做小做快，不做长链路。
 
 ## 架构
 
@@ -98,7 +107,7 @@ scripts/pigeonctl quit
 
 已有设置界面（⌘, 打开，SwiftUI Settings scene 分四个 Tab）：General（标签风格、图标分类，`AppSettings`）、Appearance（系统/亮/暗、主题色）、Terminal（内核 GUI 设置：字体=系统等宽字体枚举 Picker、字号滑杆、9 个内置主题卡片（One Dark/GitHub/Solarized/Dracula/Nord/Tokyo Night/Monokai，写完整 16 色 palette）、光标、不透明度；`KernelSettings` 写进配置文件末尾的 pigeon-settings 托管块并热重载，块外内容留给手改且被托管块覆盖）、Agent（AI Provider 管理：内置 Anthropic/OpenAI/DeepSeek + 自定义 Provider（URL+模型+key），模型是枚举 Select 可从 /models 端点刷新，API key 每个 Provider 单独存 Keychain（service dev.ahpx.pigeon.agent），`AgentSettings`）、Advanced（配置文件路径/打开/重载）。程序化打开设置窗口必须走 SwiftUI openSettings 环境动作（`SettingsOpener` 桥接 + `.pigeonOpenSettings` 通知）—— showSettingsWindow: 等老 selector 在 macOS 26 上已失效；cmd+, 在 performKeyEquivalent 里明确不给 ghostty（它默认绑成 open_config）。
 
-路线图（用户随时会调整）：splits → 多窗口 → 主题。
+路线图（用户随时会调整）：**Agent 运行时**（产品定位章节说的轻量小任务助手，Provider 配置已就位，缺执行层：对话入口 UI、把终端上下文喂给模型、工具调用如读目录/跑只读命令）→ splits → 多窗口。
 
 ## 约定
 
