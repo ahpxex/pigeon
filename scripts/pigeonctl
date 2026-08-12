@@ -49,6 +49,7 @@ case "$1" in
   rename)     curl -sf -X POST --data "{\"id\":\"$2\",\"title\":\"$3\"}" "$BASE/tabs/rename" ;;
   icon)       curl -sf -X POST --data "{\"id\":\"$2\",\"icon\":\"$3\"}" "$BASE/tabs/icon" ;;
   group-new)  curl -sf -X POST --data "{\"name\":\"$2\"}" "$BASE/groups/new" ;;
+  group-expand) curl -sf -X POST --data "{\"id\":\"$2\",\"expanded\":$3}" "$BASE/groups/expand" ;;
   group-assign)
     if [ "$3" = "none" ]; then
       curl -sf -X POST --data "{\"tabId\":\"$2\",\"groupId\":null}" "$BASE/groups/assign"

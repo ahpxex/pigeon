@@ -262,6 +262,15 @@ final class DriverServer {
             let group = manager.createGroup(named: json["name"] as? String)
             return HTTPResponse(json: ["id": group.id.uuidString])
 
+        case ("POST", "/groups/expand"):
+            guard let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any],
+                  let id = json["id"] as? String,
+                  let expanded = json["expanded"] as? Bool,
+                  let group = manager.groups.first(where: { $0.id.uuidString == id })
+            else { return HTTPResponse(status: 400, error: "need {id, expanded}") }
+            manager.setExpanded(group, expanded: expanded)
+            return HTTPResponse(json: ["ok": true])
+
         case ("POST", "/groups/assign"):
             guard let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any],
                   let tabID = json["tabId"] as? String,

@@ -142,6 +142,17 @@ private struct TabSidebar: View {
     @State private var dragTargetIndex: Int? = nil
     @State private var rowSlotHeight: CGFloat = 29
 
+    /// Container the pointer is hovering during a drag, when it differs
+    /// from the dragged tab's own container.
+    @State private var dropContainer: DropContainer = .none
+
+    /// Measured row frames in the "sidebarList" space, for hit-testing
+    /// drags across containers.
+    @State private var rowFrames: [SidebarRowKey: CGRect] = [:]
+
+    /// Group whose name is being edited because it was just created.
+    @State private var editingGroupID: TabGroup.ID? = nil
+
     private let rowSpacing: CGFloat = 2
 
     var body: some View {
@@ -150,23 +161,46 @@ private struct TabSidebar: View {
             Spacer()
                 .frame(height: 44)
 
-            ScrollView {
-                VStack(spacing: rowSpacing) {
-                    ForEach(tabManager.ungroupedTabs) { tab in
-                        decoratedRow(for: tab)
-                    }
-                    ForEach(tabManager.groups) { group in
-                        GroupHeaderRow(group: group)
-                        if group.isExpanded {
-                            ForEach(tabManager.tabs(in: group)) { tab in
+            GeometryReader { viewport in
+                ScrollView {
+                    VStack(spacing: 0) {
+                        VStack(spacing: rowSpacing) {
+                            ForEach(tabManager.ungroupedTabs) { tab in
                                 decoratedRow(for: tab)
-                                    .padding(.leading, 14)
+                            }
+                            ForEach(tabManager.groups) { group in
+                                GroupHeaderRow(
+                                    group: group,
+                                    isDropTarget: dropContainer == .group(group.id),
+                                    editingGroupID: $editingGroupID)
+                                .background(frameReader(for: .header(group.id)))
+                                if group.isExpanded {
+                                    ForEach(tabManager.tabs(in: group)) { tab in
+                                        decoratedRow(for: tab)
+                                            .padding(.leading, 14)
+                                    }
+                                }
                             }
                         }
+                        .padding(.horizontal, 8)
+
+                        // Blank space below the rows: click to start a new
+                        // group, named inline. Cancelling removes it again.
+                        Color.clear
+                            .frame(maxWidth: .infinity)
+                            .frame(minHeight: 44, maxHeight: .infinity)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                let group = tabManager.createGroup(named: "")
+                                editingGroupID = group.id
+                            }
+                            .accessibilityIdentifier("sidebarBlankArea")
                     }
+                    .frame(minHeight: viewport.size.height, alignment: .top)
                 }
-                .padding(.horizontal, 8)
             }
+            .coordinateSpace(name: "sidebarList")
+            .onPreferenceChange(SidebarRowFramesKey.self) { rowFrames = $0 }
 
             Spacer(minLength: 0)
 
@@ -225,6 +259,7 @@ private struct TabSidebar: View {
             isSelected: tab.id == tabManager.selectedTabID,
             isOnlyTab: tabManager.tabs.count == 1)
         .background(rowHeightReader)
+        .background(frameReader(for: .tab(tab.id)))
         .offset(y: rowOffset(for: tab))
         .zIndex(draggingTabID == tab.id ? 1 : 0)
         .shadow(
@@ -244,17 +279,53 @@ private struct TabSidebar: View {
         }
     }
 
+    private func frameReader(for key: SidebarRowKey) -> some View {
+        GeometryReader { geo in
+            Color.clear.preference(
+                key: SidebarRowFramesKey.self,
+                value: [key: geo.frame(in: .named("sidebarList"))])
+        }
+    }
+
     private var slotHeight: CGFloat { rowSlotHeight + rowSpacing }
 
-    /// Reordering happens within a tab's container: its group, or the
-    /// ungrouped top level. Cross-container moves go through the
-    /// context menu, which keeps the drag slot math local and simple.
+    /// In-container reordering uses slot math; hovering another container
+    /// (group rows, group header, or the top-level region) turns the drag
+    /// into a move-into-container instead.
     private func containerMembers(of tab: TerminalTab) -> [TerminalTab] {
         tabManager.tabs.filter { $0.groupID == tab.groupID }
     }
 
+    /// Which container the given point (in sidebarList space) is over.
+    private func container(at point: CGPoint) -> DropContainer {
+        for group in tabManager.groups {
+            if let frame = rowFrames[.header(group.id)], frame.contains(point) {
+                return .group(group.id)
+            }
+        }
+        for tab in tabManager.tabs {
+            if let frame = rowFrames[.tab(tab.id)], frame.contains(point) {
+                if let groupID = tab.groupID { return .group(groupID) }
+                return .topLevel
+            }
+        }
+        return .none
+    }
+
+    private func dropContainer(for tab: TerminalTab, at point: CGPoint) -> DropContainer {
+        let hovered = container(at: point)
+        switch hovered {
+        case .none:
+            return .none
+        case .topLevel:
+            return tab.groupID == nil ? .none : .topLevel
+        case .group(let id):
+            return tab.groupID == id ? .none : .group(id)
+        }
+    }
+
     private func reorderGesture(for tab: TerminalTab) -> some Gesture {
-        DragGesture(minimumDistance: 4)
+        DragGesture(minimumDistance: 4, coordinateSpace: .named("sidebarList"))
             .onChanged { value in
                 let members = containerMembers(of: tab)
                 guard let from = members.firstIndex(where: { $0.id == tab.id })
@@ -265,23 +336,42 @@ private struct TabSidebar: View {
                 }
                 dragTranslation = value.translation.height
 
+                let newDrop = dropContainer(for: tab, at: value.location)
                 let slots = Int((dragTranslation / slotHeight).rounded())
-                let target = max(0, min(members.count - 1, from + slots))
-                if target != dragTargetIndex {
+                // While hovering a foreign container, container-mates stay
+                // put (no slot preview) — the group header highlights.
+                let target = newDrop == .none
+                    ? max(0, min(members.count - 1, from + slots))
+                    : from
+                if target != dragTargetIndex || newDrop != dropContainer {
                     withAnimation(.easeOut(duration: 0.12)) {
                         dragTargetIndex = target
+                        dropContainer = newDrop
                     }
                 }
             }
             .onEnded { _ in
                 withAnimation(.easeOut(duration: 0.15)) {
                     if let id = draggingTabID,
-                       let target = dragTargetIndex {
-                        tabManager.move(tabID: id, toContainerIndex: target)
+                       let dragged = tabManager.tabs.first(where: { $0.id == id }) {
+                        switch dropContainer {
+                        case .group(let groupID):
+                            if let group = tabManager.groups.first(where: { $0.id == groupID }) {
+                                tabManager.assign(dragged, to: group)
+                                tabManager.setExpanded(group, expanded: true)
+                            }
+                        case .topLevel:
+                            tabManager.assign(dragged, to: nil)
+                        case .none:
+                            if let target = dragTargetIndex {
+                                tabManager.move(tabID: id, toContainerIndex: target)
+                            }
+                        }
                     }
                     draggingTabID = nil
                     dragTranslation = 0
                     dragTargetIndex = nil
+                    dropContainer = .none
                 }
             }
     }
@@ -310,9 +400,31 @@ private struct TabSidebar: View {
     }
 }
 
+/// Identifies measurable sidebar rows for drag hit-testing.
+private enum SidebarRowKey: Hashable {
+    case tab(TerminalTab.ID)
+    case header(TabGroup.ID)
+}
+
+private enum DropContainer: Equatable {
+    case none
+    case topLevel
+    case group(TabGroup.ID)
+}
+
+private struct SidebarRowFramesKey: PreferenceKey {
+    static var defaultValue: [SidebarRowKey: CGRect] = [:]
+    static func reduce(value: inout [SidebarRowKey: CGRect], nextValue: () -> [SidebarRowKey: CGRect]) {
+        value.merge(nextValue()) { _, new in new }
+    }
+}
+
 /// Collapsible group section header.
 private struct GroupHeaderRow: View {
     @ObservedObject var group: TabGroup
+    let isDropTarget: Bool
+    @Binding var editingGroupID: TabGroup.ID?
+
     @EnvironmentObject private var ghostty: Ghostty.App
     @State private var hovering = false
     @State private var renaming = false
@@ -327,15 +439,16 @@ private struct GroupHeaderRow: View {
                 .opacity(0.5)
 
             if renaming {
-                TextField("", text: $draftName)
+                TextField("Group Name", text: $draftName)
                     .textFieldStyle(.plain)
                     .font(.system(size: 11, weight: .semibold))
                     .focused($renameFieldFocused)
                     .onSubmit { commitRename() }
-                    .onExitCommand { renaming = false }
+                    .onExitCommand { cancelRename() }
                     .onChange(of: renameFieldFocused) { focused in
                         if !focused && renaming { commitRename() }
                     }
+                    .accessibilityIdentifier("renameGroupField")
             } else {
                 Text(group.name)
                     .font(.system(size: 11, weight: .semibold))
@@ -347,17 +460,32 @@ private struct GroupHeaderRow: View {
         .padding(.vertical, 5)
         .padding(.top, 6)
         .foregroundStyle(ghostty.foregroundColor.opacity(hovering ? 0.8 : 0.55))
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color.accentColor.opacity(isDropTarget ? 0.25 : 0)))
         .contentShape(Rectangle())
         .onTapGesture {
+            guard !renaming else { return }
             withAnimation(.easeOut(duration: 0.15)) {
-                group.isExpanded.toggle()
+                TabManager.shared.toggleExpanded(group)
             }
         }
         .onHover { hovering = $0 }
         .contextMenu {
             Button("Rename Group") { startRename() }
-            Button("Ungroup") { TabManager.shared.ungroup(group) }
+            Button("Delete Group") { TabManager.shared.deleteGroup(group) }
         }
+        .onAppear {
+            // A group created from the blank-area click starts life in
+            // name-editing mode.
+            if editingGroupID == group.id { startRename() }
+        }
+    }
+
+    /// True while the group is a fresh, unnamed creation: cancelling the
+    /// name edit removes it instead of leaving an anonymous group behind.
+    private var isProvisional: Bool {
+        editingGroupID == group.id && group.name.isEmpty
     }
 
     private func startRename() {
@@ -370,7 +498,20 @@ private struct GroupHeaderRow: View {
         guard renaming else { return }
         renaming = false
         let trimmed = draftName.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty { group.name = trimmed }
+        if !trimmed.isEmpty {
+            group.name = trimmed
+        } else if isProvisional {
+            TabManager.shared.deleteGroup(group)
+        }
+        editingGroupID = nil
+    }
+
+    private func cancelRename() {
+        renaming = false
+        if isProvisional {
+            TabManager.shared.deleteGroup(group)
+        }
+        editingGroupID = nil
     }
 }
 

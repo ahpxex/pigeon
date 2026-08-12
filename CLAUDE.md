@@ -70,7 +70,7 @@ scripts/pigeonctl key enter|escape|tab|up|down|ctrl-c|...
 scripts/pigeonctl text            # 读回整屏文本 —— 断言用这个
 scripts/pigeonctl sidebar [show|hide|<width>]  # 侧边栏状态/折叠/宽度
 scripts/pigeonctl move <id> <index> / rename <id> <名字>  # 排序、重命名（空名字恢复 shell 标题）
-scripts/pigeonctl icon <id> <code> / group-new <名字> / group-assign <tabid> <groupid|none>
+scripts/pigeonctl icon <id> <code> / group-new <名字> / group-assign <tabid> <groupid|none> / group-expand <id> <true|false>|none>
 scripts/pigeonctl screenshot x.png# 用 state 里的 windowNumber 精确截窗口
 scripts/pigeonctl quit
 ```
@@ -83,7 +83,7 @@ scripts/pigeonctl quit
 
 ## 当前状态与路线图
 
-已实现：垂直 Tab 侧边栏（多 tab、切换保活、关闭、拖拽排序（组内）、右键重命名（customTitle 覆盖 shell 标题）、cmd+T/W、cmd+1-9 走 ghostty 键位；拖拽调宽 160-420、拖到 <120 或 ⌥⌘S 折叠，状态持久化在 UserDefaults，`WorkspaceState`）、窗口配色与终端主题统一（hiddenTitleBar 全铺背景色）、分组（TabGroup：折叠/改名/解散，右键 Move to Group，空组自动回收，组内拖拽排序，跨组移动走右键菜单）、OpenMoji tab 图标（56 个精选 128px PNG 打进 bundle，新 tab 随机分配，右键 Change Icon 弹网格选择器；OpenMoji CC BY-SA 4.0 需保留署名）、驱动服务与 pigeonctl、键盘（含基本 IME preedit）、鼠标、剪贴板、标题、光标形状、bell、URL 打开、Ghostty 配置加载。
+已实现：垂直 Tab 侧边栏（多 tab、切换保活、关闭、拖拽排序（组内）、右键重命名（customTitle 覆盖 shell 标题）、cmd+T/W、cmd+1-9 走 ghostty 键位；拖拽调宽 160-420、拖到 <120 或 ⌥⌘S 折叠，状态持久化在 UserDefaults，`WorkspaceState`）、窗口配色与终端主题统一（hiddenTitleBar 全铺背景色）、分组（TabGroup：折叠/改名/删除，右键 Move to Group，侧边栏空白处单击新建组并行内命名（空名=取消），拖拽 tab 到组头或组区域直接入组（高亮提示），组内拖拽排序，空组保留到手动删除）、OpenMoji tab 图标（56 个精选 128px PNG 打进 bundle，新 tab 随机分配，右键 Change Icon 弹网格选择器；OpenMoji CC BY-SA 4.0 需保留署名）、驱动服务与 pigeonctl、键盘（含基本 IME preedit）、鼠标、剪贴板、标题、光标形状、bell、URL 打开、Ghostty 配置加载。
 
 已知简化（做功能时优先补这些）：
 - 剪贴板读取确认（OSC 52）目前直接放行，没有像 Ghostty 那样弹确认框

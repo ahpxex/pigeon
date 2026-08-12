@@ -83,9 +83,7 @@ final class TabManager: ObservableObject {
     func close(_ tab: TerminalTab) {
         guard let index = tabs.firstIndex(where: { $0.id == tab.id }) else { return }
         let window = tab.surfaceView.window
-        let groupID = tab.groupID
         tabs.remove(at: index)
-        removeGroupIfEmpty(groupID)
 
         if tabs.isEmpty {
             window?.close()
@@ -97,6 +95,9 @@ final class TabManager: ObservableObject {
     }
 
     // MARK: Groups
+    //
+    // Groups may be empty (created ahead of use); they only disappear via
+    // deleteGroup or when a just-created group's name edit is cancelled.
 
     @discardableResult
     func createGroup(named name: String? = nil) -> TabGroup {
@@ -110,24 +111,27 @@ final class TabManager: ObservableObject {
         // in is derived state of this manager — publish the change here so
         // the sidebar recomputes its sections.
         objectWillChange.send()
-        let previous = tab.groupID
         tab.groupID = group?.id
-        removeGroupIfEmpty(previous)
     }
 
-    /// Dissolve a group; members return to the top level.
-    func ungroup(_ group: TabGroup) {
+    /// Delete a group; members (if any) return to the top level.
+    func deleteGroup(_ group: TabGroup) {
         for tab in tabs where tab.groupID == group.id {
             tab.groupID = nil
         }
         groups.removeAll { $0.id == group.id }
     }
 
-    private func removeGroupIfEmpty(_ groupID: TabGroup.ID?) {
-        guard let groupID,
-              !tabs.contains(where: { $0.groupID == groupID })
-        else { return }
-        groups.removeAll { $0.id == groupID }
+    /// Collapse state is read by the sidebar's body (derived state of the
+    /// manager), so the toggle must publish through the manager too.
+    func toggleExpanded(_ group: TabGroup) {
+        objectWillChange.send()
+        group.isExpanded.toggle()
+    }
+
+    func setExpanded(_ group: TabGroup, expanded: Bool) {
+        guard group.isExpanded != expanded else { return }
+        toggleExpanded(group)
     }
 
     func select(_ tab: TerminalTab) {
