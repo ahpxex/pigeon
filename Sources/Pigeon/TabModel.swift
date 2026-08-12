@@ -8,6 +8,9 @@ final class TerminalTab: Identifiable, ObservableObject {
     let id = UUID()
     let surfaceView: Ghostty.SurfaceView
 
+    /// User-assigned name. When set it wins over the shell-reported title.
+    @Published var customTitle: String?
+
     init?(app: ghostty_app_t) {
         let view = Ghostty.SurfaceView(app: app)
         guard view.surface != nil else { return nil }
@@ -65,6 +68,28 @@ final class TabManager: ObservableObject {
 
     func select(_ tab: TerminalTab) {
         selectedTabID = tab.id
+    }
+
+    /// Move a tab so it takes the position currently held by `target`.
+    /// Used by drag-reordering (live, as the drag hovers rows).
+    func move(tabID: TerminalTab.ID, before target: TerminalTab.ID) {
+        guard tabID != target,
+              let from = tabs.firstIndex(where: { $0.id == tabID }),
+              let to = tabs.firstIndex(where: { $0.id == target })
+        else { return }
+        tabs.move(
+            fromOffsets: IndexSet(integer: from),
+            toOffset: to > from ? to + 1 : to)
+    }
+
+    /// Move a tab to an absolute index (driver/testing).
+    func move(tabID: TerminalTab.ID, toIndex index: Int) {
+        guard let from = tabs.firstIndex(where: { $0.id == tabID }),
+              tabs.indices.contains(index)
+        else { return }
+        tabs.move(
+            fromOffsets: IndexSet(integer: from),
+            toOffset: index > from ? index + 1 : index)
     }
 
     private func tab(owning view: Ghostty.SurfaceView) -> TerminalTab? {

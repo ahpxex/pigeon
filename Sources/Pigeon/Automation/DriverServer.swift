@@ -13,6 +13,8 @@ import Network
 ///   POST /tabs/new          -> {id}
 ///   POST /tabs/select       <- {"id": "..."}
 ///   POST /tabs/close        <- {"id": "..."}
+///   POST /tabs/move         <- {"id": "...", "index": 0}
+///   POST /tabs/rename       <- {"id": "...", "title": "..."} (empty resets)
 ///   POST /input/text        <- raw body, pasted into the selected tab
 ///                              (goes through the paste path; use /input/key
 ///                              for enter/escape/ctrl-x)
@@ -186,7 +188,8 @@ final class DriverServer {
                 "tabs": manager.tabs.map { tab in
                     [
                         "id": tab.id.uuidString,
-                        "title": tab.surfaceView.title,
+                        "title": tab.customTitle ?? tab.surfaceView.title,
+                        "shellTitle": tab.surfaceView.title,
                         "selected": tab.id == manager.selectedTabID,
                     ]
                 },
@@ -212,6 +215,24 @@ final class DriverServer {
                 return HTTPResponse(status: 404, error: "tab not found")
             }
             manager.close(tab)
+            return HTTPResponse(json: ["ok": true])
+
+        case ("POST", "/tabs/move"):
+            guard let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any],
+                  let id = json["id"] as? String,
+                  let index = json["index"] as? Int,
+                  let tab = manager.tabs.first(where: { $0.id.uuidString == id })
+            else { return HTTPResponse(status: 400, error: "need {id, index}") }
+            manager.move(tabID: tab.id, toIndex: index)
+            return HTTPResponse(json: ["ok": true])
+
+        case ("POST", "/tabs/rename"):
+            guard let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any],
+                  let id = json["id"] as? String,
+                  let title = json["title"] as? String,
+                  let tab = manager.tabs.first(where: { $0.id.uuidString == id })
+            else { return HTTPResponse(status: 400, error: "need {id, title}") }
+            tab.customTitle = title.isEmpty ? nil : title
             return HTTPResponse(json: ["ok": true])
 
         case ("POST", "/input/text"):

@@ -45,6 +45,8 @@ case "$1" in
   new-tab)    curl -sf -X POST "$BASE/tabs/new" ;;
   select)     curl -sf -X POST --data "{\"id\":\"$2\"}" "$BASE/tabs/select" ;;
   close)      curl -sf -X POST --data "{\"id\":\"$2\"}" "$BASE/tabs/close" ;;
+  move)       curl -sf -X POST --data "{\"id\":\"$2\",\"index\":$3}" "$BASE/tabs/move" ;;
+  rename)     curl -sf -X POST --data "{\"id\":\"$2\",\"title\":\"$3\"}" "$BASE/tabs/rename" ;;
   type)       printf '%s' "$2" | curl -sf -X POST --data-binary @- "$BASE/input/text" ;;
   key)        curl -sf -X POST --data "{\"key\":\"$2\"}" "$BASE/input/key" ;;
   run)
