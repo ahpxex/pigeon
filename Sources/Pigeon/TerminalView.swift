@@ -131,7 +131,18 @@ private struct SidebarResizeHandle: View {
 private struct TabSidebar: View {
     @EnvironmentObject private var ghostty: Ghostty.App
     @ObservedObject private var tabManager = TabManager.shared
-    @State private var draggedTabID: TerminalTab.ID? = nil
+
+    /// Gesture-driven reordering state. We deliberately avoid the system
+    /// drag-and-drop machinery (onDrag/onDrop): it snapshots the row into
+    /// a system drag image that animates a fly-back on release, and never
+    /// reports drags dropped outside a delegate — both caused visible
+    /// ghosting. A plain DragGesture keeps everything in-process.
+    @State private var draggingTabID: TerminalTab.ID? = nil
+    @State private var dragTranslation: CGFloat = 0
+    @State private var dragTargetIndex: Int? = nil
+    @State private var rowSlotHeight: CGFloat = 29
+
+    private let rowSpacing: CGFloat = 2
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -140,23 +151,23 @@ private struct TabSidebar: View {
                 .frame(height: 44)
 
             ScrollView {
-                VStack(spacing: 2) {
+                VStack(spacing: rowSpacing) {
                     ForEach(tabManager.tabs) { tab in
                         TabRow(
                             tab: tab,
                             surfaceView: tab.surfaceView,
                             isSelected: tab.id == tabManager.selectedTabID,
                             isOnlyTab: tabManager.tabs.count == 1)
-                        .opacity(draggedTabID == tab.id ? 0.4 : 1)
-                        .onDrag {
-                            draggedTabID = tab.id
-                            return NSItemProvider(object: tab.id.uuidString as NSString)
-                        }
-                        .onDrop(
-                            of: [.text],
-                            delegate: TabDropDelegate(
-                                target: tab.id,
-                                dragged: $draggedTabID))
+                        .background(rowHeightReader)
+                        .offset(y: rowOffset(for: tab))
+                        .zIndex(draggingTabID == tab.id ? 1 : 0)
+                        .shadow(
+                            color: .black.opacity(draggingTabID == tab.id ? 0.3 : 0),
+                            radius: 4, y: 2)
+                        // High priority so the row wins drags over the
+                        // ScrollView; trackpad/wheel scrolling is a separate
+                        // event type on macOS and keeps working.
+                        .highPriorityGesture(reorderGesture(for: tab))
                     }
                 }
                 .padding(.horizontal, 8)
@@ -208,27 +219,66 @@ private struct TabSidebar: View {
     private var chromeForeground: Color {
         ghostty.foregroundColor
     }
-}
 
-/// Reorders tabs live while a dragged row hovers over this one.
-private struct TabDropDelegate: DropDelegate {
-    let target: TerminalTab.ID
-    @Binding var dragged: TerminalTab.ID?
+    // MARK: Reordering
 
-    func dropEntered(info: DropInfo) {
-        guard let dragged, dragged != target else { return }
-        withAnimation(.easeOut(duration: 0.12)) {
-            TabManager.shared.move(tabID: dragged, before: target)
+    /// Rows are uniform height; measure the first one so slot math stays
+    /// correct across font/OS changes.
+    private var rowHeightReader: some View {
+        GeometryReader { geo in
+            Color.clear.onAppear { rowSlotHeight = geo.size.height }
         }
     }
 
-    func dropUpdated(info: DropInfo) -> DropProposal? {
-        DropProposal(operation: .move)
+    private var slotHeight: CGFloat { rowSlotHeight + rowSpacing }
+
+    private func reorderGesture(for tab: TerminalTab) -> some Gesture {
+        DragGesture(minimumDistance: 4)
+            .onChanged { value in
+                guard let from = tabManager.tabs.firstIndex(where: { $0.id == tab.id })
+                else { return }
+                if draggingTabID == nil {
+                    draggingTabID = tab.id
+                    dragTargetIndex = from
+                }
+                dragTranslation = value.translation.height
+
+                let slots = Int((dragTranslation / slotHeight).rounded())
+                let target = max(0, min(tabManager.tabs.count - 1, from + slots))
+                if target != dragTargetIndex {
+                    withAnimation(.easeOut(duration: 0.12)) {
+                        dragTargetIndex = target
+                    }
+                }
+            }
+            .onEnded { _ in
+                withAnimation(.easeOut(duration: 0.15)) {
+                    if let id = draggingTabID,
+                       let target = dragTargetIndex {
+                        tabManager.move(tabID: id, toIndex: target)
+                    }
+                    draggingTabID = nil
+                    dragTranslation = 0
+                    dragTargetIndex = nil
+                }
+            }
     }
 
-    func performDrop(info: DropInfo) -> Bool {
-        dragged = nil
-        return true
+    /// The dragged row follows the pointer; rows between the original and
+    /// target positions slide one slot out of the way.
+    private func rowOffset(for tab: TerminalTab) -> CGFloat {
+        guard let dragID = draggingTabID,
+              let from = tabManager.tabs.firstIndex(where: { $0.id == dragID }),
+              let target = dragTargetIndex
+        else { return 0 }
+
+        if tab.id == dragID { return dragTranslation }
+
+        guard let index = tabManager.tabs.firstIndex(where: { $0.id == tab.id })
+        else { return 0 }
+        if from < index && index <= target { return -slotHeight }
+        if target <= index && index < from { return slotHeight }
+        return 0
     }
 }
 
