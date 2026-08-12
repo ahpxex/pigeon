@@ -353,7 +353,9 @@ private struct TabRow: View {
                 .fill(ghostty.foregroundColor.opacity(
                     isSelected ? 0.15 : (hovering ? 0.07 : 0))))
         .contentShape(Rectangle())
-        .onTapGesture(count: 2) { startRename() }
+        // Single tap only: a double-tap gesture here would force SwiftUI
+        // to hold every click for the double-click interval, making tab
+        // switching feel laggy. Rename lives in the context menu.
         .onTapGesture { TabManager.shared.select(tab) }
         .onHover { hovering = $0 }
         .contextMenu {
