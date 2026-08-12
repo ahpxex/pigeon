@@ -15,24 +15,49 @@ Pigeon 的特色是"终端自带一个轻量 Agent"。设计边界要牢记：
 
 ```
 Sources/Pigeon/
-├── PigeonApp.swift          # @main SwiftUI App（Window scene，hiddenTitleBar）
-├── AppDelegate.swift        # 生命周期、激活策略、启动 DriverServer
-├── TerminalView.swift       # 工作区：自绘垂直 Tab 侧边栏 + 多 surface 保活切换
-├── TabModel.swift           # TerminalTab / TabManager（tab 生命周期与选中态）
-├── Info.plist
+├── App/                     # 入口与全局状态
+│   ├── PigeonApp.swift      #   @main（Window scene，hiddenTitleBar，Settings scene，菜单）
+│   ├── AppDelegate.swift    #   生命周期、激活策略、外观应用、启动 DriverServer
+│   ├── AppSettings.swift    #   Pigeon 外壳设置（标签风格/图标分类/外观/主题色，UserDefaults）
+│   └── WorkspaceState.swift #   侧边栏宽度/折叠（UserDefaults）
+├── Ghostty/                 # libghostty 封装层（不要把 C API 扩散到这层之外）
+│   ├── Ghostty.swift        #   命名空间、ghostty_init、修饰键转换、NSEvent → key event
+│   ├── GhosttyApp.swift     #   ghostty_app_t 生命周期、runtime 回调、配置读值、reload
+│   ├── GhosttyConfigStore.swift # 配置文件管理 + ghostty_config_load_file 加载
+│   ├── KernelSettings.swift #   GUI 管理的内核设置（托管块写入 + 热重载）
+│   ├── SurfaceView.swift    #   NSView：surface、键盘（含 IME）、鼠标、resize、focus、注入/读回
+│   └── TerminalTheme.swift  #   内置主题目录（bg/fg/16 色 palette）
+├── Tabs/
+│   ├── TabModel.swift       #   TerminalTab / TabGroup / TabManager
+│   └── TabIcon.swift        #   OpenMoji 目录与缓存
+├── Workspace/               # 主窗口 UI
+│   ├── TerminalView.swift   #   根视图 + 工作区布局 + 窗口透明 + Settings 桥
+│   ├── TerminalSurface.swift#   NSViewRepresentable 桥接
+│   └── Sidebar/
+│       ├── TabSidebar.swift #   列表结构 + 拖拽排序/入组 + resize 手柄
+│       ├── TabRow.swift     #   行：图标/标题/改名/右键菜单/⌘N 徽标
+│       ├── GroupHeaderRow.swift # 组头：折叠/改名/删除
+│       └── IconPicker.swift #   图标网格选择器
+├── Settings/                # 设置窗口，一 Tab 一文件
+│   ├── SettingsView.swift / GeneralSettingsTab / AppearanceSettingsTab
+│   └── TerminalSettingsTab / AgentSettingsTab / AdvancedSettingsTab
+├── Agent/
+│   └── AgentSettings.swift  #   AI Provider 配置 + Keychain + /models 拉取
 ├── Automation/
-│   └── DriverServer.swift   # 调试驱动服务（localhost HTTP，PIGEON_DRIVER_PORT 开启）
-└── Ghostty/                 # libghostty 封装层（不要把 C API 扩散到这层之外）
-    ├── Ghostty.swift        # 命名空间、ghostty_init、修饰键转换、NSEvent → key event
-    ├── GhosttyApp.swift     # ghostty_app_t 生命周期、runtime 回调、配置色读取
-    └── SurfaceView.swift    # NSView：surface、键盘（含 IME）、鼠标、resize、focus、文本注入/读回
+│   └── DriverServer.swift   #   调试驱动服务（localhost HTTP，PIGEON_DRIVER_PORT 开启）
+├── Resources/OpenMoji/      # 56 个图标 PNG
+├── Assets.xcassets          # AppIcon
+└── Info.plist
 
+patches/                     # 对 vendor/ghostty 的本地补丁（setup.sh 自动应用）
 vendor/                      # 全部 gitignore，由 scripts/setup.sh 重建
-├── ghostty/                 # Ghostty 源码，固定 tag v1.2.3
+├── ghostty/                 # Ghostty 源码，固定 tag v1.2.3 + patches/
 │   └── macos/GhosttyKit.xcframework   # zig 构建产物（静态库 + 头文件）
 ├── zig-cache/               # zig 依赖缓存（离线灌入）
 └── downloads/               # curl/git 下载的依赖原始文件
 ```
+
+分层规则：App（全局状态）→ Workspace/Settings（UI）→ Tabs（模型）→ Ghostty（内核封装）。UI 不直接碰 GhosttyKit 的 C API；新功能先想清楚归哪层，单文件超过 ~300 行就该考虑拆。
 
 关键机制：
 
