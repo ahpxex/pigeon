@@ -33,7 +33,13 @@ struct AgentMessage: Codable {
     }
 
     static func assistant(_ text: String?, toolCalls: [ToolCallRequest]? = nil) -> AgentMessage {
-        AgentMessage(role: .assistant, content: text, toolCalls: toolCalls)
+        // Providers reject "tool_calls": [] (DeepSeek: "expected an array
+        // with minimum length 1") — an empty list means no tool calls,
+        // so encode it as absent.
+        AgentMessage(
+            role: .assistant,
+            content: text,
+            toolCalls: (toolCalls?.isEmpty == true) ? nil : toolCalls)
     }
 
     static func toolResult(callID: String, _ text: String) -> AgentMessage {

@@ -108,7 +108,9 @@ open build/Build/Products/Debug/Pigeon.app   # 或从 Xcode 跑
 
 **输出渲染**：助手文本经 `Agent/Render/MarkdownANSIRenderer` 流式转成 ANSI（粗体/斜体/`code` 青色/标题/列表 •/引用 ▌/围栏代码/OSC 8 链接），按行缓冲——inline 标记可能跨 chunk 但不会跨行，所以整行攒齐再渲染。系统提示允许简单 markdown（表格除外，渲染不了）。工具行等非 markdown 输出穿插前要先 flush 渲染器。
 
-**Eval**（`evals/`，改 agent 相关代码后必须跑）：`python3 evals/run.py` 走真实 `/ask` 链路跑确定性回归（mock LLM 脚本化 turns：渲染、工具循环、轮次预算、拒绝逻辑）+ 安全预检（无 token/错 token/Origin/坏 Host 必须 403）；`--suite evals/cases/live.json --live --provider DeepSeek` 跑真实 Provider 质量套件。详见 evals/README.md。
+**上下文**：每次 `/ask` 的上下文 = 系统提示（角色 + 规则 + cwd/OS + **当前屏幕尾部** ≤60 行/6KB，从 surface 直接读 `screenText()`）+ **本 tab 的对话历史**（`ConversationMemory`，按 surface 存最近 6 轮 user/assistant 对，内存态、随 app 生命周期）+ 当前提问 + 本次请求内的工具轮。surface 身份链路：SurfaceView 生成 `agentSurfaceID` → 注入 env `PIGEON_SURFACE_ID` → zsh 钩子回传 `X-Pigeon-Surface` 头。⚠️ 历史里的 assistant 消息不能带空 `tool_calls: []`（DeepSeek 拒绝，AgentMessage.assistant 已归一化为省略）。
+
+**Eval**（`evals/`，改 agent 相关代码后必须跑）：独立 SwiftPM 包（进程内 mock LLM，无子进程），入口 `scripts/eval`（固定 /usr/bin/swift —— PATH 里 swiftly 的 toolchain 与系统 SDK 不兼容）。走真实 `/ask` 链路跑确定性回归（渲染、工具循环、确认协议、对话记忆、拒绝逻辑）+ 安全预检（/ask 和 /confirm 对无 token/错 token/Origin/坏 Host 必须 403）；`--suite evals/cases/live.json --live --provider DeepSeek` 跑真实 Provider 质量套件。⚠️ eval 客户端读流不能用 URLSession（AsyncBytes 有缓冲，确认哨兵会卡死在缓冲里），用的是裸 NWConnection + 手动 chunked 解码。详见 evals/README.md。
 
 已知改进点：语言一致性 eval 需要 LLM judge；确认应答目前只有 y/N 两态（没有"本次会话总是允许"）；`intent` 缺失时确认文案回落到 "Run: <argv>"（英文）。
 
@@ -153,7 +155,7 @@ scripts/pigeonctl quit
 
 已有设置界面（⌘, 打开，SwiftUI Settings scene 分四个 Tab）：General（标签风格、图标分类，`AppSettings`）、Appearance（系统/亮/暗、主题色）、Terminal（内核 GUI 设置：字体=系统等宽字体枚举 Picker、字号滑杆、9 个内置主题卡片（One Dark/GitHub/Solarized/Dracula/Nord/Tokyo Night/Monokai，写完整 16 色 palette）、光标、不透明度；`KernelSettings` 写进配置文件末尾的 pigeon-settings 托管块并热重载，块外内容留给手改且被托管块覆盖）、Agent（AI Provider 管理：顶部 Picker 选 Provider（选中即默认），下方只显示选中者的配置——内置 Anthropic/OpenAI/DeepSeek + 自定义 Provider（URL+模型+key），模型列表不硬编码——key 填好后自动从 /models 端点拉取（改 key/URL 防抖重拉，手动刷新保留），拉到的列表持久化当缓存，API key 每个 Provider 单独存 `~/.config/pigeon/credentials.json`，`AgentSettings`）、Advanced（配置文件路径/打开/重载）。程序化打开设置窗口必须走 SwiftUI openSettings 环境动作（`SettingsOpener` 桥接 + `.pigeonOpenSettings` 通知）—— showSettingsWindow: 等老 selector 在 macOS 26 上已失效；cmd+, 在 performKeyEquivalent 里明确不给 ghostty（它默认绑成 open_config）。
 
-路线图（用户随时会调整）：Agent 打磨（多轮上下文记忆、屏幕内容注入）→ splits → 多窗口。
+路线图（用户随时会调整）：Agent 打磨 → splits → 多窗口。
 
 ## 约定
 

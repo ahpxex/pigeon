@@ -115,6 +115,7 @@ if [[ -n "$PIGEON_AGENT_PORT" ]]; then
             -H "Content-Type: text/plain; charset=utf-8" \
             -H "Authorization: Bearer ${PIGEON_AGENT_TOKEN}" \
             -H "X-Pigeon-Cwd: $PWD" \
+            -H "X-Pigeon-Surface: ${PIGEON_SURFACE_ID:-}" \
             --data-binary "$prompt" \
         | while IFS= read -r line || [[ -n "$line" ]]; do
             _pigeon_spinner_stop

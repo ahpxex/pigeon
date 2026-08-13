@@ -158,16 +158,39 @@ final class AgentServer {
             return
         }
         let cwd = request.headers["x-pigeon-cwd"] ?? FileManager.default.homeDirectoryForCurrentUser.path
+        let surfaceID = request.headers["x-pigeon-surface"]
 
         send(connection, raw: "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n")
 
         Task { @MainActor in
-            await self.streamAgent(prompt: prompt, cwd: cwd, connection: connection)
+            await self.streamAgent(
+                prompt: prompt, cwd: cwd, surfaceID: surfaceID, connection: connection)
         }
     }
 
+    /// Trimmed tail of the surface's screen: enough for "this error right
+    /// here", small enough to keep requests fast and cheap.
     @MainActor
-    private func streamAgent(prompt: String, cwd: String, connection: NWConnection) async {
+    private func screenContext(surfaceID: String?) -> String? {
+        guard let surfaceID,
+              let tab = TabManager.shared.tabs.first(where: {
+                  $0.surfaceView.agentSurfaceID == surfaceID
+              })
+        else { return nil }
+        var lines = tab.surfaceView.screenText()
+            .components(separatedBy: "\n")
+            .map { $0.replacingOccurrences(of: "\\s+$", with: "", options: .regularExpression) }
+        while lines.last?.isEmpty == true { lines.removeLast() }
+        lines = lines.suffix(60)
+        var text = lines.joined(separator: "\n")
+        if text.count > 6_000 { text = String(text.suffix(6_000)) }
+        return text.isEmpty ? nil : text
+    }
+
+    @MainActor
+    private func streamAgent(
+        prompt: String, cwd: String, surfaceID: String?, connection: NWConnection
+    ) async {
         let agent = AgentSettings.shared
         guard let provider = agent.providers.first(where: { $0.id == agent.defaultProviderID })
                 ?? agent.providers.first
@@ -203,6 +226,8 @@ final class AgentServer {
             model: provider.selectedModel,
             prompt: prompt,
             cwd: cwd,
+            history: surfaceID.map { ConversationMemory.shared.history(surface: $0) } ?? [],
+            screenContext: screenContext(surfaceID: surfaceID),
             confirm: { [weak self] message, command in
                 guard let self else { return false }
                 return await self.requestConfirmation(
@@ -212,9 +237,13 @@ final class AgentServer {
                     flush: { await MainActor.run { flushRenderer() } })
             }))
 
+        // Raw (pre-render) assistant text, kept for conversation memory.
+        var answerText = ""
+
         for await event in events {
             switch event {
             case .textDelta(let piece):
+                answerText += piece
                 sendChunk(connection, renderer.feed(piece))
             case .toolStart(let name, let summary):
                 flushRenderer()
@@ -232,7 +261,12 @@ final class AgentServer {
                 flushRenderer()
                 switch reason {
                 case .done, .toolCalls:
-                    break
+                    if let surfaceID {
+                        ConversationMemory.shared.append(
+                            surface: surfaceID,
+                            user: prompt,
+                            assistant: answerText.trimmingCharacters(in: .whitespacesAndNewlines))
+                    }
                 case .aborted:
                     sendChunk(connection, "\u{1B}[2m(aborted)\u{1B}[0m\n")
                 case .error:

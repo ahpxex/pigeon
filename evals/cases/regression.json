@@ -648,5 +648,52 @@
         "value": "cannot push"
       }
     ]
+  },
+  {
+    "name": "memory-first-exchange",
+    "prompt": "eval memory first",
+    "surface": "eval-mem-1",
+    "turns": [
+      {
+        "text": "noted, remembering this\n"
+      }
+    ],
+    "expect": [
+      {
+        "type": "contains",
+        "value": "noted, remembering this"
+      }
+    ]
+  },
+  {
+    "name": "memory-recall-sees-history",
+    "prompt": "eval memory recall",
+    "surface": "eval-mem-1",
+    "turns": [
+      {
+        "echo_user_count": true
+      }
+    ],
+    "expect": [
+      {
+        "type": "contains",
+        "value": "user_count=2"
+      }
+    ]
+  },
+  {
+    "name": "memory-isolated-without-surface",
+    "prompt": "eval memory isolated",
+    "turns": [
+      {
+        "echo_user_count": true
+      }
+    ],
+    "expect": [
+      {
+        "type": "contains",
+        "value": "user_count=1"
+      }
+    ]
   }
 ]

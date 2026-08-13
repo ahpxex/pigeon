@@ -1,0 +1,8 @@
+#!/bin/sh
+# Run the Pigeon agent eval harness (SwiftPM package in evals/).
+# Usage: scripts/eval [--suite ...] [--live --provider X] [--only ...] [--verbose]
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# /usr/bin/swift = Xcode's toolchain. A swiftly/custom toolchain in PATH
+# may not match the installed SDK (seen: 6.1.2 vs Xcode 26 → module
+# '_Builtin_float' build errors).
+exec /usr/bin/swift run --package-path "$ROOT/evals" pigeon-eval "$@"

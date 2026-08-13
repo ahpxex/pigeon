@@ -27,6 +27,11 @@ extension Ghostty {
 
         private var mouseShape: NSCursor = .iBeam
 
+        /// Stable identity the shell hook echoes back on /ask (via
+        /// X-Pigeon-Surface): the agent uses it to read THIS tab's screen
+        /// and to keep this tab's conversation memory.
+        let agentSurfaceID = UUID().uuidString
+
         override var acceptsFirstResponder: Bool { true }
 
         init(app: ghostty_app_t) {
@@ -47,6 +52,7 @@ extension Ghostty {
             let env = [
                 ("PIGEON_AGENT_PORT", String(AgentServer.shared.port)),
                 ("PIGEON_AGENT_TOKEN", AgentServer.shared.token),
+                ("PIGEON_SURFACE_ID", agentSurfaceID),
             ]
             let surface = Self.withEnvVars(env) { envPtr, count in
                 config.env_vars = envPtr

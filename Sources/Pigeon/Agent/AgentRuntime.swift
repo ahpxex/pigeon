@@ -14,6 +14,12 @@ enum AgentRuntime {
         var model: String
         var prompt: String
         var cwd: String
+        /// Prior exchanges in this tab's conversation, oldest first
+        /// (alternating user/assistant messages).
+        var history: [AgentMessage] = []
+        /// What the user currently sees in the terminal (trimmed tail of
+        /// the screen), so "what does this error mean" just works.
+        var screenContext: String? = nil
         /// Asks the user to approve one destructive tool call:
         /// (natural-language message, literal command). nil (no way to
         /// ask) means deny.
@@ -30,13 +36,13 @@ enum AgentRuntime {
         }
     }
 
-    private static func systemPrompt(cwd: String) -> String {
-        """
-        You are Pigeon, a terminal-native assistant for quick, small tasks: \
-        inspecting directories, finding files, explaining errors, checking \
-        ports and processes, and small file operations (rename, move, \
-        clean up, create a file) when the user asks for them. You are not \
-        a coding agent; keep answers short and act immediately.
+    private static func systemPrompt(cwd: String, screen: String?) -> String {
+        var prompt = """
+        You are Pigeon, a lightweight agent built into the user's \
+        terminal. Help with whatever is at hand: inspect directories and \
+        files, explain errors and command output, check ports and \
+        processes, do file operations. Act immediately and keep answers \
+        short.
 
         Rules:
         - Reply in the user's language.
@@ -58,16 +64,27 @@ enum AgentRuntime {
 
         Context: working directory is \(cwd), OS is macOS.
         """
+        if let screen, !screen.isEmpty {
+            prompt += """
+
+
+            The user's terminal screen right now (oldest line first — the \
+            question they just typed is the last prompt line; anything \
+            they refer to, like "this error", is probably here):
+            \(screen)
+            """
+        }
+        return prompt
     }
 
     private static func loop(
         _ config: RunConfig,
         continuation: AsyncStream<AgentEvent>.Continuation
     ) async {
-        var messages: [AgentMessage] = [
-            .system(systemPrompt(cwd: config.cwd)),
-            .user(config.prompt),
-        ]
+        var messages: [AgentMessage] =
+            [.system(systemPrompt(cwd: config.cwd, screen: config.screenContext))]
+            + config.history
+            + [.user(config.prompt)]
         let tools = BuiltinTools.all
 
         for _ in 0..<maxRounds {
