@@ -7,10 +7,32 @@ enum BuiltinTools {
         RunReadOnlyCommand(),
         ListDirectory(),
         ReadFileHead(),
+        RunMutatingCommand(),
+        WriteFile(),
     ]
 
     static func tool(named name: String) -> AgentTool? {
         all.first { $0.spec.name == name }
+    }
+}
+
+/// Shared binary resolution: allowlisted bare names only, resolved to
+/// absolute paths from fixed directories. Never honors a caller path.
+enum ToolBinaries {
+    static let searchDirs = [
+        "/bin", "/usr/bin", "/sbin", "/usr/sbin",
+        "/opt/homebrew/bin", "/usr/local/bin",
+    ]
+
+    static func resolve(_ name: String, allowlist: [String]) -> String? {
+        guard allowlist.contains(name), !name.contains("/") else { return nil }
+        for dir in searchDirs {
+            let candidate = "\(dir)/\(name)"
+            if FileManager.default.isExecutableFile(atPath: candidate) {
+                return candidate
+            }
+        }
+        return nil
     }
 }
 
@@ -28,11 +50,6 @@ struct RunReadOnlyCommand: AgentTool {
         "cat", "grep", "ps", "lsof", "whoami", "id", "date", "uname",
         "which", "pwd", "uptime", "sw_vers", "mdfind", "codesign",
         "git", "tree",
-    ]
-
-    private static let searchDirs = [
-        "/bin", "/usr/bin", "/sbin", "/usr/sbin",
-        "/opt/homebrew/bin", "/usr/local/bin",
     ]
 
     /// Flags that turn an otherwise read-only binary into an arbitrary
@@ -122,16 +139,7 @@ struct RunReadOnlyCommand: AgentTool {
     /// Absolute path for an allowlisted binary, or nil if not allowed /
     /// not found. Never honors a caller-supplied path.
     static func resolve(_ name: String) -> String? {
-        guard allowedBinaries.contains(name) else { return nil }
-        // Reject any path component — only bare names resolve.
-        guard !name.contains("/") else { return nil }
-        for dir in searchDirs {
-            let candidate = "\(dir)/\(name)"
-            if FileManager.default.isExecutableFile(atPath: candidate) {
-                return candidate
-            }
-        }
-        return nil
+        ToolBinaries.resolve(name, allowlist: allowedBinaries)
     }
 }
 

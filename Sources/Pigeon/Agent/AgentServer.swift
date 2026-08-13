@@ -14,6 +14,11 @@ import Security
 ///       X-Pigeon-Cwd: <working directory>
 ///     Body: raw prompt text (no JSON — avoids shell quoting pain)
 ///     Response: chunked plain text, ANSI-colored for terminal display.
+///       A mutating tool call suspends the stream and emits one line
+///         \u{01}PIGEON_CONFIRM\u{01}<id>\u{01}<action summary>
+///       and the agent waits (120 s, then auto-deny) for:
+///   POST /confirm   (same auth rules)
+///     Body: {"id": "...", "allow": true|false}
 ///
 /// The bind is 127.0.0.1-only, but that alone is not a trust boundary:
 /// any local process — including a browser tab via a simple POST, or a
@@ -128,6 +133,20 @@ final class AgentServer {
             send(connection, raw: "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
             return
         }
+        if request.method == "POST", request.path == "/confirm" {
+            guard let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any],
+                  let id = json["id"] as? String,
+                  let allow = json["allow"] as? Bool
+            else {
+                send(connection, raw: "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                return
+            }
+            Task { @MainActor in
+                ConfirmationBroker.shared.resolve(id: id, allow: allow)
+            }
+            send(connection, raw: "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            return
+        }
         guard request.method == "POST", request.path == "/ask" else {
             send(connection, raw: "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
             return
@@ -169,13 +188,6 @@ final class AgentServer {
             return
         }
 
-        let events = AgentRuntime.run(.init(
-            baseURL: provider.baseURL,
-            apiKey: key,
-            model: provider.selectedModel,
-            prompt: prompt,
-            cwd: cwd))
-
         // Markdown in the assistant text is rendered to ANSI as it
         // streams; the renderer is line-buffered, so flush its partial
         // line before interleaving any non-markdown output.
@@ -184,6 +196,20 @@ final class AgentServer {
             let tail = renderer.flush()
             if !tail.isEmpty { sendChunk(connection, tail + "\n") }
         }
+
+        let events = AgentRuntime.run(.init(
+            baseURL: provider.baseURL,
+            apiKey: key,
+            model: provider.selectedModel,
+            prompt: prompt,
+            cwd: cwd,
+            confirm: { [weak self] summary in
+                guard let self else { return false }
+                return await self.requestConfirmation(
+                    summary: summary,
+                    connection: connection,
+                    flush: { await MainActor.run { flushRenderer() } })
+            }))
 
         for await event in events {
             switch event {
@@ -211,6 +237,32 @@ final class AgentServer {
             }
         }
         finishChunks(connection)
+    }
+
+    /// Emit a confirmation request into the stream and wait for the
+    /// shell hook to POST /confirm. Timeout or cancellation (user hit
+    /// Ctrl+C) counts as a deny.
+    private func requestConfirmation(
+        summary: String,
+        connection: NWConnection,
+        flush: @escaping @Sendable () async -> Void
+    ) async -> Bool {
+        await flush()
+        let id = UUID().uuidString
+        // The summary is argv-derived, so scrub control characters that
+        // could break the one-line sentinel framing.
+        let clean = String(summary.map { char -> Character in
+            guard let scalar = char.unicodeScalars.first, scalar.value < 32 else { return char }
+            return " "
+        })
+        sendChunk(connection, "\u{01}PIGEON_CONFIRM\u{01}\(id)\u{01}\(clean)\n")
+        return await withTaskCancellationHandler {
+            await ConfirmationBroker.shared.wait(id: id, timeout: 120)
+        } onCancel: {
+            Task { @MainActor in
+                ConfirmationBroker.shared.resolve(id: id, allow: false)
+            }
+        }
     }
 
     /// Bearer token (constant-time compared) + exact loopback Host +
@@ -260,5 +312,31 @@ final class AgentServer {
         connection.send(
             content: Data("0\r\n\r\n".utf8),
             completion: .contentProcessed { _ in connection.cancel() })
+    }
+}
+
+/// Rendezvous between an agent run awaiting a user decision and the
+/// /confirm request that carries it. Every id resolves exactly once:
+/// first of user answer / timeout / cancellation wins.
+@MainActor
+final class ConfirmationBroker {
+    static let shared = ConfirmationBroker()
+
+    private var pending: [String: CheckedContinuation<Bool, Never>] = [:]
+
+    private init() {}
+
+    func wait(id: String, timeout: TimeInterval) async -> Bool {
+        await withCheckedContinuation { continuation in
+            pending[id] = continuation
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                self?.resolve(id: id, allow: false)
+            }
+        }
+    }
+
+    func resolve(id: String, allow: Bool) {
+        pending.removeValue(forKey: id)?.resume(returning: allow)
     }
 }

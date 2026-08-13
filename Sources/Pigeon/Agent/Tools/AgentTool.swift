@@ -27,11 +27,17 @@ struct AgentToolResult {
     var display: String
 }
 
-/// A capability the agent may invoke. Implementations must be safe to run
-/// with no user confirmation (read-only) — anything mutating goes through
-/// the permission gate in the runtime.
+/// A capability the agent may invoke. Read-only tools run freely; a tool
+/// that mutates anything sets `requiresConfirmation` and the runtime
+/// gates every call behind an explicit user yes/no.
 protocol AgentTool {
     var spec: AgentToolSpec { get }
+    /// Whether every invocation must be confirmed by the user first.
+    var requiresConfirmation: Bool { get }
     /// Execute with parsed arguments, relative to the caller's cwd.
     func execute(arguments: [String: Any], cwd: String) async -> AgentToolResult
+}
+
+extension AgentTool {
+    var requiresConfirmation: Bool { false }
 }

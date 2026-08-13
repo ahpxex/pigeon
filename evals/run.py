@@ -26,6 +26,9 @@ Case schema (JSON, see evals/cases/*.json):
     prompt       what the "user typed"
     turns        (regression only) scripted assistant turns for mock_llm
     fixture      {"filename": "content", "subdir/": null} — temp cwd
+    confirm      "allow" | "deny" (default) — answer to confirmation
+                 requests from mutating tools; they appear in the text as
+                 "[confirm-request] <display>"
     expect       list of checks:
         {"type": "contains",      "value": str}      on ANSI-stripped text
         {"type": "not_contains",  "value": str}
@@ -36,6 +39,8 @@ Case schema (JSON, see evals/cases/*.json):
         {"type": "max_lines",     "n": int}           non-empty answer lines
         {"type": "max_seconds",   "n": float}
         {"type": "no_error"}                          no "pigeon:" error line
+        {"type": "fixture_exists", "value": path, "contains"?: str}
+        {"type": "fixture_missing", "value": path}    checked before cleanup
 """
 
 import argparse
@@ -72,9 +77,18 @@ def driver(method, path, body=None):
     return json.loads(data) if data else {}
 
 
+CONFIRM_SENTINEL = b"\x01PIGEON_CONFIRM\x01"
+
+
 def ask(agent_port, token, prompt, cwd, timeout, host=None, origin=None,
-        omit_auth=False):
-    """POST /ask exactly like the shell hook does; returns (status, raw)."""
+        omit_auth=False, confirm="deny"):
+    """POST /ask exactly like the shell hook does; returns (status, raw).
+
+    Streams the response line by line so confirmation sentinels can be
+    answered mid-flight (like the zsh hook does): `confirm` is "allow" or
+    "deny". Sentinel lines are replaced by "[confirm-request] <display>"
+    in the returned text so cases can assert on them.
+    """
     conn = http.client.HTTPConnection("127.0.0.1", agent_port, timeout=timeout)
     conn.putrequest("POST", "/ask", skip_host=True)
     conn.putheader("Host", host or f"127.0.0.1:{agent_port}")
@@ -88,15 +102,46 @@ def ask(agent_port, token, prompt, cwd, timeout, host=None, origin=None,
     conn.endheaders()
     conn.send(body)
     response = conn.getresponse()
-    raw = response.read().decode(errors="replace")
-    status = response.status
+    if response.status != 200:
+        raw = response.read().decode(errors="replace")
+        conn.close()
+        return response.status, raw
+
+    parts, buf = [], b""
+    while True:
+        byte = response.read(1)
+        if not byte:
+            break
+        buf += byte
+        if byte != b"\n":
+            continue
+        line, buf = buf, b""
+        if line.startswith(CONFIRM_SENTINEL):
+            fields = line.decode(errors="replace").rstrip("\n").split("\x01")
+            confirm_id = fields[2] if len(fields) > 2 else ""
+            display = fields[3] if len(fields) > 3 else ""
+            parts.append(f"[confirm-request] {display}\n".encode())
+            post_confirm(agent_port, token, confirm_id, confirm == "allow")
+        else:
+            parts.append(line)
+    if buf:
+        parts.append(buf)
     conn.close()
-    return status, raw
+    return 200, b"".join(parts).decode(errors="replace")
+
+
+def post_confirm(agent_port, token, confirm_id, allow):
+    conn = http.client.HTTPConnection("127.0.0.1", agent_port, timeout=10)
+    payload = json.dumps({"id": confirm_id, "allow": allow})
+    conn.request("POST", "/confirm", body=payload,
+                 headers={"Authorization": f"Bearer {token}"})
+    conn.getresponse().read()
+    conn.close()
 
 
 # ---------------------------------------------------------------- checks
 
-def run_checks(case, raw, seconds):
+def run_checks(case, raw, seconds, cwd):
     text = strip_ansi(raw)
     failures = []
     for check in case.get("expect", []):
@@ -124,6 +169,14 @@ def run_checks(case, raw, seconds):
             ok = seconds <= check["n"]
         elif kind == "no_error":
             ok = "pigeon:" not in text
+        elif kind == "fixture_exists":
+            path = os.path.join(cwd, value)
+            ok = os.path.isfile(path)
+            if ok and check.get("contains"):
+                with open(path) as f:
+                    ok = check["contains"] in f.read()
+        elif kind == "fixture_missing":
+            ok = not os.path.exists(os.path.join(cwd, value))
         else:
             ok = False
             value = f"unknown check type {kind!r}"
@@ -169,6 +222,18 @@ def security_preflight(agent_port, token):
             continue
         if status != 403:
             failures.append(f"{name}: expected 403, got {status}")
+
+    # /confirm shares the same auth rules — an unauthenticated confirm
+    # would let any local process approve mutations.
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", agent_port, timeout=10)
+        conn.request("POST", "/confirm", body='{"id":"x","allow":true}')
+        status = conn.getresponse().status
+        conn.close()
+        if status != 403:
+            failures.append(f"unauthenticated /confirm: expected 403, got {status}")
+    except Exception as e:  # noqa: BLE001
+        failures.append(f"unauthenticated /confirm: request error {e}")
     return failures
 
 
@@ -267,10 +332,11 @@ def run_cases(cases, agent_port, token, args):
         cwd = build_fixture(case.get("fixture")) if "fixture" in case else os.path.expanduser("~")
         started = time.monotonic()
         try:
-            status, raw = ask(agent_port, token, case["prompt"], cwd, args.timeout)
+            status, raw = ask(agent_port, token, case["prompt"], cwd, args.timeout,
+                              confirm=case.get("confirm", "deny"))
             seconds = time.monotonic() - started
             failures = ([f"HTTP {status}"] if status != 200 else
-                        run_checks(case, raw, seconds))
+                        run_checks(case, raw, seconds, cwd))
         except Exception as e:  # noqa: BLE001
             seconds = time.monotonic() - started
             raw, failures = "", [f"request error: {e}"]

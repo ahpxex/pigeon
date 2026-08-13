@@ -14,6 +14,9 @@ enum AgentRuntime {
         var model: String
         var prompt: String
         var cwd: String
+        /// Asks the user to approve one mutating tool call, described by
+        /// a human-readable summary. nil (no way to ask) means deny.
+        var confirm: (@Sendable (String) async -> Bool)? = nil
     }
 
     static func run(_ config: RunConfig) -> AsyncStream<AgentEvent> {
@@ -30,8 +33,9 @@ enum AgentRuntime {
         """
         You are Pigeon, a terminal-native assistant for quick, small tasks: \
         inspecting directories, finding files, explaining errors, checking \
-        ports and processes. You are not a coding agent; keep answers short \
-        and act immediately.
+        ports and processes, and small file operations (rename, move, \
+        clean up, create a file) when the user asks for them. You are not \
+        a coding agent; keep answers short and act immediately.
 
         Rules:
         - Reply in the user's language.
@@ -41,6 +45,11 @@ enum AgentRuntime {
         are not rendered.
         - Prefer one tool call that answers the question over asking the \
         user anything.
+        - Mutating tools (run_mutating_command, write_file) prompt the \
+        user to confirm each call: use them only when the user asked for \
+        a change, keep each call minimal, and if the user declines, stop \
+        and acknowledge — never retry. For destructive steps (rm), list \
+        what would be affected with a read-only tool first.
         - Keep the final answer under ~15 lines.
 
         Context: working directory is \(cwd), OS is macOS.
@@ -99,7 +108,7 @@ enum AgentRuntime {
             // Sequential tool execution: micro-tasks rarely need more than
             // one call, and ordering keeps terminal output readable.
             for call in turn.toolCalls {
-                let result = await execute(call, cwd: config.cwd, continuation: continuation)
+                let result = await execute(call, config: config, continuation: continuation)
                 messages.append(.toolResult(callID: call.id, result.output))
             }
         }
@@ -111,7 +120,7 @@ enum AgentRuntime {
 
     private static func execute(
         _ call: ToolCallRequest,
-        cwd: String,
+        config: RunConfig,
         continuation: AsyncStream<AgentEvent>.Continuation
     ) async -> AgentToolResult {
         guard let tool = BuiltinTools.tool(named: call.function.name) else {
@@ -125,19 +134,41 @@ enum AgentRuntime {
 
         let arguments = (try? JSONSerialization.jsonObject(
             with: Data(call.function.arguments.utf8))) as? [String: Any] ?? [:]
+        let summary = toolSummary(
+            name: call.function.name, arguments: arguments, cwd: config.cwd)
 
-        continuation.yield(.toolStart(
-            name: call.function.name,
-            summary: toolSummary(name: call.function.name, arguments: arguments)))
+        // Permission gate: every mutating call needs an explicit yes from
+        // the user, per call, with the exact action shown. No way to ask
+        // (headless consumer) means no.
+        if tool.requiresConfirmation {
+            let allowed = await config.confirm?(summary) ?? false
+            if !allowed {
+                let result = AgentToolResult(
+                    ok: false,
+                    output: "the user declined this action; do not retry it — "
+                        + "acknowledge and adjust",
+                    display: "declined: \(summary)")
+                continuation.yield(.toolEnd(name: call.function.name, ok: false, summary: result.display))
+                return result
+            }
+        }
 
-        let result = await tool.execute(arguments: arguments, cwd: cwd)
+        continuation.yield(.toolStart(name: call.function.name, summary: summary))
+
+        let result = await tool.execute(arguments: arguments, cwd: config.cwd)
         continuation.yield(.toolEnd(name: call.function.name, ok: result.ok, summary: result.display))
         return result
     }
 
     /// Short human label for a tool call, from whichever arg carries the
-    /// intent.
-    private static func toolSummary(name: String, arguments: [String: Any]) -> String {
+    /// intent. This is also the text of the confirmation prompt, so it
+    /// must show the full action — never truncate the argv.
+    private static func toolSummary(
+        name: String, arguments: [String: Any], cwd: String
+    ) -> String {
+        if name == "write_file" {
+            return WriteFile.confirmSummary(arguments: arguments, cwd: cwd)
+        }
         if let pipeline = arguments["pipeline"] as? [[String]] {
             return pipeline.map { $0.joined(separator: " ") }.joined(separator: " | ")
         }

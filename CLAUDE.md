@@ -98,7 +98,9 @@ open build/Build/Products/Debug/Pigeon.app   # 或从 Xcode 跑
 
 入口就是终端本身：输入合法命令照常执行；首词不是命令时 zsh 调 `command_not_found_handler`（构建时追加到打包的 shell integration，`scripts/pigeon-integration.zsh`），整行作为自然语言 curl 到 app 内的 AgentServer（常驻 localhost，端口经 surface env `PIGEON_AGENT_PORT` 注入），回答以 chunked 流直接打回 pty（工具行灰色 ANSI）。Ctrl+C 打断 curl 即取消。
 
-运行时架构抄 Pi 的设计语法（等效 Swift 实现在 `Agent/`）：ChatStreamClient 遵守"永不 throw"契约（错误编码进事件流）；AgentRuntime 是 ≤6 轮的顺序工具 loop；事件类型化（AgentEvent）。工具全部只读。单短词不触发 agent（多半是敲错命令）。DeepSeek 是一等公民（OpenAI 兼容 /chat/completions + SSE + function calling），任何同协议端点即插即用。
+运行时架构抄 Pi 的设计语法（等效 Swift 实现在 `Agent/`）：ChatStreamClient 遵守"永不 throw"契约（错误编码进事件流）；AgentRuntime 是 ≤6 轮的顺序工具 loop；事件类型化（AgentEvent）。工具分两档：只读（run_command/list_dir/read_file，自由执行）与可变（run_mutating_command/write_file，`requiresConfirmation`，每次调用都要用户确认）。纯 ASCII 单短词不触发 agent（多半是敲错命令），含 CJK 的输入一律视为自然语言。DeepSeek 是一等公民（OpenAI 兼容 /chat/completions + SSE + function calling），任何同协议端点即插即用。
+
+**可变操作确认协议**：runtime 在执行 `requiresConfirmation` 工具前调 RunConfig.confirm 闭包（nil=拒绝）；AgentServer 的实现是往流里发一行哨兵 `\x01PIGEON_CONFIRM\x01<id>\x01<动作描述>`，zsh 钩子逐行读流、认出哨兵后在 /dev/tty 上问 `[y/N]`，答案 POST 回 `/confirm`（与 /ask 同一套鉴权），ConfirmationBroker 唤醒等待的 agent；120s 无应答或 Ctrl+C（连接断）都算拒绝。拒绝作为工具结果喂回模型（提示语要求它不要重试）。可变命令白名单只含本地操作（mv/cp/mkdir/rm/chmod/git 本地子命令等，git push/pull/fetch 拒绝），依旧 argv 数组直接 exec 永不过 shell。
 
 **安全（这两条是硬红线，别退回去）：**
 - **AgentServer 是本地 RCE 级端点，必须鉴权**。绑 127.0.0.1 不是信任边界 —— 浏览器标签页能 POST、DNS rebinding 能绕、本机其他进程能读。每个 `/ask` 请求必须：带每次启动新生成的 bearer token（`PIGEON_AGENT_TOKEN`，随端口一起注入 surface env，常量时间比较）、Host 精确等于 `127.0.0.1:<port>`/`localhost:<port>`、不带任何 Origin 头。三者缺一即 403。
@@ -108,7 +110,7 @@ open build/Build/Products/Debug/Pigeon.app   # 或从 Xcode 跑
 
 **Eval**（`evals/`，改 agent 相关代码后必须跑）：`python3 evals/run.py` 走真实 `/ask` 链路跑确定性回归（mock LLM 脚本化 turns：渲染、工具循环、轮次预算、拒绝逻辑）+ 安全预检（无 token/错 token/Origin/坏 Host 必须 403）；`--suite evals/cases/live.json --live --provider DeepSeek` 跑真实 Provider 质量套件。详见 evals/README.md。
 
-已知改进点：无确认机制的可变操作工具还没做（beforeToolCall 挂载点已留）；语言一致性 eval 需要 LLM judge。
+已知改进点：语言一致性 eval 需要 LLM judge；确认应答目前只有 y/N 两态（没有"本次会话总是允许"）。
 
 ## 自动化测试（驱动服务）
 
@@ -150,7 +152,7 @@ scripts/pigeonctl quit
 
 已有设置界面（⌘, 打开，SwiftUI Settings scene 分四个 Tab）：General（标签风格、图标分类，`AppSettings`）、Appearance（系统/亮/暗、主题色）、Terminal（内核 GUI 设置：字体=系统等宽字体枚举 Picker、字号滑杆、9 个内置主题卡片（One Dark/GitHub/Solarized/Dracula/Nord/Tokyo Night/Monokai，写完整 16 色 palette）、光标、不透明度；`KernelSettings` 写进配置文件末尾的 pigeon-settings 托管块并热重载，块外内容留给手改且被托管块覆盖）、Agent（AI Provider 管理：顶部 Picker 选 Provider（选中即默认），下方只显示选中者的配置——内置 Anthropic/OpenAI/DeepSeek + 自定义 Provider（URL+模型+key），模型列表不硬编码——key 填好后自动从 /models 端点拉取（改 key/URL 防抖重拉，手动刷新保留），拉到的列表持久化当缓存，API key 每个 Provider 单独存 `~/.config/pigeon/credentials.json`，`AgentSettings`）、Advanced（配置文件路径/打开/重载）。程序化打开设置窗口必须走 SwiftUI openSettings 环境动作（`SettingsOpener` 桥接 + `.pigeonOpenSettings` 通知）—— showSettingsWindow: 等老 selector 在 macOS 26 上已失效；cmd+, 在 performKeyEquivalent 里明确不给 ghostty（它默认绑成 open_config）。
 
-路线图（用户随时会调整）：Agent 打磨（多轮上下文记忆、屏幕内容注入、可变操作确认）→ splits → 多窗口。
+路线图（用户随时会调整）：Agent 打磨（多轮上下文记忆、屏幕内容注入）→ splits → 多窗口。
 
 ## 约定
 

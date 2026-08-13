@@ -8,27 +8,64 @@
       }
     ],
     "expect": [
-      { "type": "raw_contains", "value": "\u001b[1m\u001b[4mHeading One\u001b[24m\u001b[22m" },
-      { "type": "raw_contains", "value": "\u001b[1mHeading Two\u001b[22m" },
-      { "type": "raw_contains", "value": "\u001b[1mbold\u001b[22m" },
-      { "type": "raw_contains", "value": "\u001b[3mitalic\u001b[23m" },
-      { "type": "raw_contains", "value": "\u001b[36minline code\u001b[39m" },
-      { "type": "raw_contains", "value": "\u001b[9mgone\u001b[29m" },
-      { "type": "raw_contains", "value": "\u001b]8;;https://example.com\u001b\\" },
-      { "type": "not_contains", "value": "**" },
-      { "type": "not_contains", "value": "# " },
-      { "type": "no_error" }
+      {
+        "type": "raw_contains",
+        "value": "\u001b[1m\u001b[4mHeading One\u001b[24m\u001b[22m"
+      },
+      {
+        "type": "raw_contains",
+        "value": "\u001b[1mHeading Two\u001b[22m"
+      },
+      {
+        "type": "raw_contains",
+        "value": "\u001b[1mbold\u001b[22m"
+      },
+      {
+        "type": "raw_contains",
+        "value": "\u001b[3mitalic\u001b[23m"
+      },
+      {
+        "type": "raw_contains",
+        "value": "\u001b[36minline code\u001b[39m"
+      },
+      {
+        "type": "raw_contains",
+        "value": "\u001b[9mgone\u001b[29m"
+      },
+      {
+        "type": "raw_contains",
+        "value": "\u001b]8;;https://example.com\u001b\\"
+      },
+      {
+        "type": "not_contains",
+        "value": "**"
+      },
+      {
+        "type": "not_contains",
+        "value": "# "
+      },
+      {
+        "type": "no_error"
+      }
     ]
   },
   {
     "name": "markdown-token-split-across-chunks",
     "prompt": "eval markdown split tokens",
     "turns": [
-      { "text": "aaaa **bold across many chunks** zzzz\n" }
+      {
+        "text": "aaaa **bold across many chunks** zzzz\n"
+      }
     ],
     "expect": [
-      { "type": "raw_contains", "value": "\u001b[1mbold across many chunks\u001b[22m" },
-      { "type": "not_contains", "value": "**" }
+      {
+        "type": "raw_contains",
+        "value": "\u001b[1mbold across many chunks\u001b[22m"
+      },
+      {
+        "type": "not_contains",
+        "value": "**"
+      }
     ]
   },
   {
@@ -40,77 +77,183 @@
       }
     ],
     "expect": [
-      { "type": "raw_contains", "value": "\u001b[2m•\u001b[22m first item" },
-      { "type": "raw_contains", "value": "\u001b[2m▌ \u001b[22mquoted line" },
-      { "type": "raw_contains", "value": "\u001b[36mgrep -r pattern .\u001b[39m" },
-      { "type": "contains", "value": "1. numbered" },
-      { "type": "contains", "value": "────" },
-      { "type": "not_contains", "value": "```" },
-      { "type": "not_contains", "value": "> quoted" }
+      {
+        "type": "raw_contains",
+        "value": "\u001b[2m•\u001b[22m first item"
+      },
+      {
+        "type": "raw_contains",
+        "value": "\u001b[2m▌ \u001b[22mquoted line"
+      },
+      {
+        "type": "raw_contains",
+        "value": "\u001b[36mgrep -r pattern .\u001b[39m"
+      },
+      {
+        "type": "contains",
+        "value": "1. numbered"
+      },
+      {
+        "type": "contains",
+        "value": "────"
+      },
+      {
+        "type": "not_contains",
+        "value": "```"
+      },
+      {
+        "type": "not_contains",
+        "value": "> quoted"
+      }
     ]
   },
   {
     "name": "markdown-literals-preserved",
     "prompt": "eval markdown literals",
     "turns": [
-      { "text": "the file my_file_name.txt and the glob *.txt stay literal\n" }
+      {
+        "text": "the file my_file_name.txt and the glob *.txt stay literal\n"
+      }
     ],
     "expect": [
-      { "type": "contains", "value": "my_file_name.txt" },
-      { "type": "contains", "value": "*.txt" },
-      { "type": "raw_not_contains", "value": "\u001b[3m" }
+      {
+        "type": "contains",
+        "value": "my_file_name.txt"
+      },
+      {
+        "type": "contains",
+        "value": "*.txt"
+      },
+      {
+        "type": "raw_not_contains",
+        "value": "\u001b[3m"
+      }
     ]
   },
   {
     "name": "tool-roundtrip",
     "prompt": "eval tool roundtrip",
-    "fixture": { "alpha.txt": "hello\n", "beta.txt": "world\n" },
+    "fixture": {
+      "alpha.txt": "hello\n",
+      "beta.txt": "world\n"
+    },
     "turns": [
-      { "tool_calls": [ { "name": "list_dir", "arguments": { "path": "." } } ] },
-      { "text": "two files: **alpha** and beta\n" }
+      {
+        "tool_calls": [
+          {
+            "name": "list_dir",
+            "arguments": {
+              "path": "."
+            }
+          }
+        ]
+      },
+      {
+        "text": "two files: **alpha** and beta\n"
+      }
     ],
     "expect": [
-      { "type": "tool_used", "value": "list_dir" },
-      { "type": "raw_contains", "value": "\u001b[1malpha\u001b[22m" },
-      { "type": "contains", "value": "two files" },
-      { "type": "no_error" }
+      {
+        "type": "tool_used",
+        "value": "list_dir"
+      },
+      {
+        "type": "raw_contains",
+        "value": "\u001b[1malpha\u001b[22m"
+      },
+      {
+        "type": "contains",
+        "value": "two files"
+      },
+      {
+        "type": "no_error"
+      }
     ]
   },
   {
     "name": "multiple-tools-one-turn",
     "prompt": "eval multiple tools",
-    "fixture": { "a.txt": "line1\nline2\n" },
+    "fixture": {
+      "a.txt": "line1\nline2\n"
+    },
     "turns": [
       {
         "tool_calls": [
-          { "name": "list_dir", "arguments": { "path": "." } },
-          { "name": "read_file", "arguments": { "path": "a.txt" } }
+          {
+            "name": "list_dir",
+            "arguments": {
+              "path": "."
+            }
+          },
+          {
+            "name": "read_file",
+            "arguments": {
+              "path": "a.txt"
+            }
+          }
         ]
       },
-      { "text": "saw both\n" }
+      {
+        "text": "saw both\n"
+      }
     ],
     "expect": [
-      { "type": "tool_used", "value": "list_dir" },
-      { "type": "tool_used", "value": "read_file" },
-      { "type": "contains", "value": "saw both" }
+      {
+        "type": "tool_used",
+        "value": "list_dir"
+      },
+      {
+        "type": "tool_used",
+        "value": "read_file"
+      },
+      {
+        "type": "contains",
+        "value": "saw both"
+      }
     ]
   },
   {
     "name": "run-command-pipeline",
     "prompt": "eval run command pipeline",
-    "fixture": { "one.txt": "1\n", "two.txt": "2\n" },
+    "fixture": {
+      "one.txt": "1\n",
+      "two.txt": "2\n"
+    },
     "turns": [
       {
         "tool_calls": [
-          { "name": "run_command", "arguments": { "pipeline": [ [ "ls" ], [ "wc", "-l" ] ] } }
+          {
+            "name": "run_command",
+            "arguments": {
+              "pipeline": [
+                [
+                  "ls"
+                ],
+                [
+                  "wc",
+                  "-l"
+                ]
+              ]
+            }
+          }
         ]
       },
-      { "text": "counted the entries\n" }
+      {
+        "text": "counted the entries\n"
+      }
     ],
     "expect": [
-      { "type": "contains", "value": "⏺ run_command: ls | wc -l" },
-      { "type": "contains", "value": "counted the entries" },
-      { "type": "no_error" }
+      {
+        "type": "contains",
+        "value": "⏺ run_command: ls | wc -l"
+      },
+      {
+        "type": "contains",
+        "value": "counted the entries"
+      },
+      {
+        "type": "no_error"
+      }
     ]
   },
   {
@@ -119,31 +262,292 @@
     "turns": [
       {
         "tool_calls": [
-          { "name": "run_command", "arguments": { "pipeline": [ [ "rm", "-rf", "/tmp/x" ] ] } }
+          {
+            "name": "run_command",
+            "arguments": {
+              "pipeline": [
+                [
+                  "rm",
+                  "-rf",
+                  "/tmp/x"
+                ]
+              ]
+            }
+          }
         ]
       },
-      { "text": "understood, cannot do that\n" }
+      {
+        "text": "understood, cannot do that\n"
+      }
     ],
     "expect": [
-      { "type": "contains", "value": "✗" },
-      { "type": "contains", "value": "拒绝" },
-      { "type": "contains", "value": "cannot do that" }
+      {
+        "type": "contains",
+        "value": "✗"
+      },
+      {
+        "type": "contains",
+        "value": "拒绝"
+      },
+      {
+        "type": "contains",
+        "value": "cannot do that"
+      }
     ]
   },
   {
     "name": "round-budget-exhausted",
     "prompt": "eval round budget",
     "turns": [
-      { "tool_calls": [ { "name": "list_dir", "arguments": { "path": "." } } ] },
-      { "tool_calls": [ { "name": "list_dir", "arguments": { "path": "." } } ] },
-      { "tool_calls": [ { "name": "list_dir", "arguments": { "path": "." } } ] },
-      { "tool_calls": [ { "name": "list_dir", "arguments": { "path": "." } } ] },
-      { "tool_calls": [ { "name": "list_dir", "arguments": { "path": "." } } ] },
-      { "tool_calls": [ { "name": "list_dir", "arguments": { "path": "." } } ] }
+      {
+        "tool_calls": [
+          {
+            "name": "list_dir",
+            "arguments": {
+              "path": "."
+            }
+          }
+        ]
+      },
+      {
+        "tool_calls": [
+          {
+            "name": "list_dir",
+            "arguments": {
+              "path": "."
+            }
+          }
+        ]
+      },
+      {
+        "tool_calls": [
+          {
+            "name": "list_dir",
+            "arguments": {
+              "path": "."
+            }
+          }
+        ]
+      },
+      {
+        "tool_calls": [
+          {
+            "name": "list_dir",
+            "arguments": {
+              "path": "."
+            }
+          }
+        ]
+      },
+      {
+        "tool_calls": [
+          {
+            "name": "list_dir",
+            "arguments": {
+              "path": "."
+            }
+          }
+        ]
+      },
+      {
+        "tool_calls": [
+          {
+            "name": "list_dir",
+            "arguments": {
+              "path": "."
+            }
+          }
+        ]
+      }
     ],
     "expect": [
-      { "type": "count", "value": "⏺", "n": 6 },
-      { "type": "contains", "value": "round budget" }
+      {
+        "type": "count",
+        "value": "⏺",
+        "n": 6
+      },
+      {
+        "type": "contains",
+        "value": "round budget"
+      }
+    ]
+  },
+  {
+    "name": "write-file-confirm-allow",
+    "prompt": "eval write file allow",
+    "fixture": {},
+    "confirm": "allow",
+    "turns": [
+      {
+        "tool_calls": [
+          {
+            "name": "write_file",
+            "arguments": {
+              "path": "note.txt",
+              "content": "hello pigeon\n"
+            }
+          }
+        ]
+      },
+      {
+        "text": "created it\n"
+      }
+    ],
+    "expect": [
+      {
+        "type": "contains",
+        "value": "[confirm-request] write_file note.txt"
+      },
+      {
+        "type": "contains",
+        "value": "new file"
+      },
+      {
+        "type": "tool_used",
+        "value": "write_file"
+      },
+      {
+        "type": "fixture_exists",
+        "value": "note.txt",
+        "contains": "hello pigeon"
+      },
+      {
+        "type": "contains",
+        "value": "created it"
+      },
+      {
+        "type": "no_error"
+      }
+    ]
+  },
+  {
+    "name": "write-file-confirm-deny",
+    "prompt": "eval write file deny",
+    "fixture": {},
+    "confirm": "deny",
+    "turns": [
+      {
+        "tool_calls": [
+          {
+            "name": "write_file",
+            "arguments": {
+              "path": "note.txt",
+              "content": "hello pigeon\n"
+            }
+          }
+        ]
+      },
+      {
+        "text": "okay, not writing\n"
+      }
+    ],
+    "expect": [
+      {
+        "type": "contains",
+        "value": "[confirm-request] write_file note.txt"
+      },
+      {
+        "type": "contains",
+        "value": "declined"
+      },
+      {
+        "type": "fixture_missing",
+        "value": "note.txt"
+      },
+      {
+        "type": "contains",
+        "value": "okay, not writing"
+      }
+    ]
+  },
+  {
+    "name": "mutating-command-confirm-allow",
+    "prompt": "eval mutating rename",
+    "fixture": {
+      "a.txt": "content\n"
+    },
+    "confirm": "allow",
+    "turns": [
+      {
+        "tool_calls": [
+          {
+            "name": "run_mutating_command",
+            "arguments": {
+              "pipeline": [
+                [
+                  "mv",
+                  "a.txt",
+                  "b.txt"
+                ]
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "text": "renamed\n"
+      }
+    ],
+    "expect": [
+      {
+        "type": "contains",
+        "value": "[confirm-request] mv a.txt b.txt"
+      },
+      {
+        "type": "contains",
+        "value": "⏺ run_mutating_command: mv a.txt b.txt"
+      },
+      {
+        "type": "fixture_exists",
+        "value": "b.txt",
+        "contains": "content"
+      },
+      {
+        "type": "fixture_missing",
+        "value": "a.txt"
+      },
+      {
+        "type": "contains",
+        "value": "renamed"
+      }
+    ]
+  },
+  {
+    "name": "mutating-remote-git-rejected",
+    "prompt": "eval mutating git push",
+    "fixture": {},
+    "confirm": "allow",
+    "turns": [
+      {
+        "tool_calls": [
+          {
+            "name": "run_mutating_command",
+            "arguments": {
+              "pipeline": [
+                [
+                  "git",
+                  "push",
+                  "origin",
+                  "main"
+                ]
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "text": "cannot push\n"
+      }
+    ],
+    "expect": [
+      {
+        "type": "contains",
+        "value": "not a local mutating subcommand"
+      },
+      {
+        "type": "contains",
+        "value": "cannot push"
+      }
     ]
   }
 ]
