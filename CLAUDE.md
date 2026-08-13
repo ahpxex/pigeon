@@ -138,6 +138,7 @@ scripts/pigeonctl quit
 - **必须用 pigeonctl launch 启动**。从后台 shell 直接 exec 二进制会得到无头进程（SwiftUI 场景不实例化、NSApp.windows 为空），这不是 bug 是 macOS 行为。
 - 新建 tab 后要等 shell 出 prompt 再 `run`（约 0.5-1s），否则输入会混进启动 banner。
 - 所有驱动请求在主线程处理，直接调 TabManager / SurfaceView，与真实交互同路径（但绕过了 AppKit 事件层 —— 键盘快捷键类问题驱动测不到，要单独想办法）。
+- ⚠️ 驱动的 `/input/key` 发 ctrl-u/ctrl-c 之类组合键时，键码可能以 CSI-u 片段形式漏进 zle 缓冲区（表现为行里出现 `;5u` 字样、行没被清掉）。测试要清行时别依赖 ctrl 键，改用 enter 把行跑掉或开新 tab。
 
 ## 当前状态与路线图
 

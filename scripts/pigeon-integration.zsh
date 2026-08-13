@@ -9,6 +9,48 @@
 # Real commands are untouched: the shell resolved them before we ever run.
 # ---------------------------------------------------------------------------
 if [[ -n "$PIGEON_AGENT_PORT" ]]; then
+    # --- prose-aware syntax highlighting -----------------------------------
+    # zsh-syntax-highlighting paints any line whose first word isn't a
+    # command as an error — but in Pigeon such lines are valid input (they
+    # dispatch to the agent). Mute its main highlighter exactly when the
+    # dispatch heuristic below would send the line to the agent: real
+    # commands keep full highlighting, a short ASCII token (likely a typo'd
+    # command) keeps its red, prose gets no paint at all.
+    _pigeon_line_is_prose() {
+        local buffer="$BUFFER"
+        [[ -n "$buffer" ]] || return 1
+        local first="${${(z)buffer}[1]}"
+        [[ -n "$first" ]] || return 1
+        # Env-assignment prefix (FOO=1 cmd) is command syntax.
+        [[ "$first" == *=* ]] && return 1
+        whence -w -- "$first" &>/dev/null && return 1
+        # Mirror of the typo guard in command_not_found_handler.
+        if [[ "$buffer" != *" "* && ${#buffer} -le 12 && "$buffer" =~ '^[a-zA-Z0-9._-]+$' ]]; then
+            return 1
+        fi
+        return 0
+    }
+
+    # Installed from precmd so it runs after the user's plugins loaded,
+    # whatever the sourcing order.
+    _pigeon_install_prose_highlighting() {
+        add-zsh-hook -d precmd _pigeon_install_prose_highlighting
+        (( $+functions[_zsh_highlight] )) || return 0
+        if (( $+functions[_zsh_highlight_highlighter_main_predicate] )); then
+            functions -c _zsh_highlight_highlighter_main_predicate _pigeon_orig_main_predicate
+        fi
+        _zsh_highlight_highlighter_main_predicate() {
+            _pigeon_line_is_prose && return 1
+            if (( $+functions[_pigeon_orig_main_predicate] )); then
+                _pigeon_orig_main_predicate
+            else
+                return 0
+            fi
+        }
+    }
+    autoload -Uz add-zsh-hook
+    add-zsh-hook precmd _pigeon_install_prose_highlighting
+
     command_not_found_handler() {
         # Reconstruct the original line as best zsh lets us.
         local prompt="$*"
