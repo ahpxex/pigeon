@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// AI provider management for the built-in agent: built-in and custom
-/// providers, per-provider API keys (Keychain), enumerated models.
+/// providers, per-provider API keys (~/.config/pigeon/credentials.json),
+/// enumerated models.
 struct AgentSettingsTab: View {
     @ObservedObject private var agent = AgentSettings.shared
 
@@ -40,14 +41,16 @@ private struct ProviderSection: View {
     @State private var fetchError: String? = nil
 
     var body: some View {
-        Section(provider.isBuiltin ? provider.name : "Custom") {
+        // Mark the active provider in the header — the key must go into
+        // THIS provider's field, a classic wrong-section paste trap.
+        Section(sectionTitle) {
             if !provider.isBuiltin {
                 TextField("Name", text: binding(\.name))
                 TextField("Base URL", text: binding(\.baseURL), prompt: Text("https://api.example.com/v1"))
                     .autocorrectionDisabled()
             }
 
-            SecureField("API key", text: $apiKey, prompt: Text("Stored in Keychain"))
+            SecureField("API key", text: $apiKey, prompt: Text("Stored in ~/.config/pigeon"))
                 .onSubmit { agent.setAPIKey(apiKey, for: provider) }
                 .onChange(of: apiKey) { newValue in
                     agent.setAPIKey(newValue, for: provider)
@@ -97,6 +100,11 @@ private struct ProviderSection: View {
             }
         }
         .onAppear { apiKey = agent.apiKey(for: provider) }
+    }
+
+    private var sectionTitle: String {
+        let name = provider.isBuiltin ? provider.name : "Custom"
+        return agent.defaultProviderID == provider.id ? "\(name) — Default" : name
     }
 
     private func binding<T>(_ keyPath: WritableKeyPath<AgentProvider, T>) -> Binding<T> {

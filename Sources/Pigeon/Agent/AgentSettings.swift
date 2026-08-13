@@ -140,6 +140,9 @@ final class AgentSettings: ObservableObject {
     }
 
     func setAPIKey(_ key: String, for provider: AgentProvider) {
+        // Pasted keys routinely carry a trailing newline or spaces, which
+        // turn into baffling 401s.
+        let key = key.trimmingCharacters(in: .whitespacesAndNewlines)
         if key.isEmpty {
             CredentialsStore.delete(account: provider.id.uuidString)
         } else {
