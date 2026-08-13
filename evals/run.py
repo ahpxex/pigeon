@@ -177,6 +177,8 @@ def run_checks(case, raw, seconds, cwd):
                     ok = check["contains"] in f.read()
         elif kind == "fixture_missing":
             ok = not os.path.exists(os.path.join(cwd, value))
+        elif kind == "single_trailing_newline":
+            ok = text.endswith("\n") and not text.endswith("\n\n")
         else:
             ok = False
             value = f"unknown check type {kind!r}"

@@ -46,6 +46,9 @@
       },
       {
         "type": "no_error"
+      },
+      {
+        "type": "single_trailing_newline"
       }
     ]
   },
@@ -104,6 +107,9 @@
       {
         "type": "not_contains",
         "value": "> quoted"
+      },
+      {
+        "type": "single_trailing_newline"
       }
     ]
   },
@@ -167,6 +173,9 @@
       },
       {
         "type": "no_error"
+      },
+      {
+        "type": "single_trailing_newline"
       }
     ]
   },

@@ -173,6 +173,8 @@ enum AgentRuntime {
             return paths.joined(separator: " ")
         }
         if let path = arguments["path"] as? String { return path }
+        // Path-taking tools default to the working directory.
+        if name == "list_dir" { return "." }
         return name
     }
 }

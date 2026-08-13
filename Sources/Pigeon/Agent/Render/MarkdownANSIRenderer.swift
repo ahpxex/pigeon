@@ -25,6 +25,11 @@ import Foundation
 final class MarkdownANSIRenderer {
     private var pending = ""
     private var inCodeFence = false
+    /// Blank lines are held back and only emitted when real content
+    /// follows: paragraph spacing inside the answer survives, but
+    /// trailing blank lines vanish — so the shell prompt reconnects
+    /// directly under the last line, like native command output.
+    private var heldBlankLines = 0
 
     /// Consume a streamed delta; returns whatever became renderable
     /// (complete lines only — possibly empty).
@@ -34,17 +39,23 @@ final class MarkdownANSIRenderer {
         while let newline = pending.firstIndex(of: "\n") {
             let line = String(pending[..<newline])
             pending = String(pending[pending.index(after: newline)...])
-            if let rendered = render(line: line) {
-                out += rendered + "\n"
+            guard let rendered = render(line: line) else { continue }
+            if rendered.allSatisfy({ $0 == " " || $0 == "\t" }) {
+                heldBlankLines += 1
+                continue
             }
+            out += String(repeating: "\n", count: heldBlankLines)
+            heldBlankLines = 0
+            out += rendered + "\n"
         }
         return out
     }
 
     /// Render any buffered partial line. Call before interleaving other
     /// output (tool status lines) and once at end of stream. The result
-    /// carries no trailing newline.
+    /// carries no trailing newline; held blank lines are dropped.
     func flush() -> String {
+        heldBlankLines = 0
         guard !pending.isEmpty else { return "" }
         let line = pending
         pending = ""

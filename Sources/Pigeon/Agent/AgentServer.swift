@@ -226,14 +226,17 @@ final class AgentServer {
                     sendChunk(connection, "\u{1B}[2m✗ \(summary)\u{1B}[0m\n")
                 }
             case .finished(let reason, let message):
+                // flushRenderer line-terminates everything sent so far;
+                // add NOTHING after the answer — the shell prompt should
+                // reconnect directly, like native command output.
                 flushRenderer()
                 switch reason {
                 case .done, .toolCalls:
-                    sendChunk(connection, "\n")
+                    break
                 case .aborted:
-                    sendChunk(connection, "\n\u{1B}[2m(aborted)\u{1B}[0m\n")
+                    sendChunk(connection, "\u{1B}[2m(aborted)\u{1B}[0m\n")
                 case .error:
-                    sendChunk(connection, "\n\u{1B}[31mpigeon: \(message ?? "error")\u{1B}[0m\n")
+                    sendChunk(connection, "\u{1B}[31mpigeon: \(message ?? "error")\u{1B}[0m\n")
                 }
             }
         }
