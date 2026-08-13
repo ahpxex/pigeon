@@ -1,0 +1,87 @@
+[
+  {
+    "name": "live-list-files",
+    "prompt": "这个目录里都有什么文件？",
+    "fixture": {
+      "季度报告-final.md": "# 季度报告\n收入增长 12%\n",
+      "data.csv": "name,value\na,1\nb,2\n",
+      "notes.txt": "remember to ship\n"
+    },
+    "expect": [
+      { "type": "contains", "value": "⏺" },
+      { "type": "regex", "value": "data\\.csv" },
+      { "type": "max_lines", "n": 15 },
+      { "type": "max_seconds", "n": 60 },
+      { "type": "no_error" }
+    ]
+  },
+  {
+    "name": "live-biggest-file",
+    "prompt": "这个目录里哪个文件最大？",
+    "fixture": {
+      "small.txt": "tiny\n",
+      "medium.log": { "repeat": "log line\n", "n": 40 },
+      "big.bin": { "repeat": "x", "n": 20000 }
+    },
+    "expect": [
+      { "type": "contains", "value": "⏺" },
+      { "type": "regex", "value": "big\\.bin" },
+      { "type": "max_lines", "n": 15 },
+      { "type": "max_seconds", "n": 60 },
+      { "type": "no_error" }
+    ]
+  },
+  {
+    "name": "live-explain-error",
+    "prompt": "解释这个报错：zsh: command not found: gti",
+    "expect": [
+      { "type": "regex", "value": "git|拼写|打错|敲错|typo" },
+      { "type": "max_lines", "n": 15 },
+      { "type": "max_seconds", "n": 60 },
+      { "type": "no_error" }
+    ]
+  },
+  {
+    "name": "live-read-config-value",
+    "prompt": "这个目录里的 config.json 里 port 配置的是多少？",
+    "fixture": {
+      "config.json": "{\n  \"port\": 4173,\n  \"debug\": true\n}\n"
+    },
+    "expect": [
+      { "type": "contains", "value": "⏺" },
+      { "type": "regex", "value": "4173" },
+      { "type": "max_lines", "n": 15 },
+      { "type": "max_seconds", "n": 60 },
+      { "type": "no_error" }
+    ]
+  },
+  {
+    "name": "live-count-csv-rows",
+    "prompt": "data.csv 里有几行数据（不算表头）？",
+    "fixture": {
+      "data.csv": "id,name\n1,a\n2,b\n3,c\n4,d\n5,e\n6,f\n7,g\n"
+    },
+    "expect": [
+      { "type": "contains", "value": "⏺" },
+      { "type": "regex", "value": "7" },
+      { "type": "max_lines", "n": 15 },
+      { "type": "max_seconds", "n": 60 },
+      { "type": "no_error" }
+    ]
+  },
+  {
+    "name": "live-english-prompt",
+    "prompt": "what files are in this directory right now?",
+    "fixture": {
+      "readme.md": "# hello\n",
+      "script.sh": "echo hi\n"
+    },
+    "expect": [
+      { "type": "contains", "value": "⏺" },
+      { "type": "regex", "value": "readme\\.md" },
+      { "type": "max_lines", "n": 15 },
+      { "type": "max_seconds", "n": 60 },
+      { "type": "no_error" }
+    ]
+  }
+]

@@ -13,9 +13,12 @@ if [[ -n "$PIGEON_AGENT_PORT" ]]; then
         # Reconstruct the original line as best zsh lets us.
         local prompt="$*"
 
-        # Heuristic guard: single short token with no spaces is almost
-        # certainly a typo'd command, not natural language.
-        if [[ "$prompt" != *" "* && ${#prompt} -le 12 && "$prompt" == [a-zA-Z0-9_-]* ]]; then
+        # Heuristic guard: a single short token made ENTIRELY of ASCII
+        # command characters is almost certainly a typo'd command, not
+        # natural language. Anything containing CJK or other non-ASCII
+        # is a sentence — Chinese needs no spaces to be one ("3000端口是啥"
+        # must reach the agent, "gti" must not).
+        if [[ "$prompt" != *" "* && ${#prompt} -le 12 && "$prompt" =~ '^[a-zA-Z0-9._-]+$' ]]; then
             print -u2 "zsh: command not found: $1"
             return 127
         fi

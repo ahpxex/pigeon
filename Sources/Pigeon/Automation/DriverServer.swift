@@ -29,6 +29,10 @@ import SwiftUI
 ///   GET  /settings          -> {labelStyle, iconCategory, appearance, accentHex}
 ///   POST /settings          <- partial update of the same keys
 ///                              (iconCategory/accentHex accept null)
+///   GET  /agent/info        -> {port, token, defaultProvider, defaultModel}
+///   POST /agent/provider    <- {name, baseURL, model, apiKey?} upsert + set default
+///   POST /agent/default     <- {name, model?} switch default only, no mutation
+///   POST /agent/provider/remove <- {name} (custom providers only)
 final class DriverServer {
     static let shared = DriverServer()
 
@@ -425,6 +429,51 @@ final class DriverServer {
             }
             agent.defaultProviderID = provider.id
             return HTTPResponse(json: ["id": provider.id.uuidString, "agentPort": Int(AgentServer.shared.port)])
+
+        case ("GET", "/agent/info"):
+            // Eval/automation hook: where the agent endpoint lives, the
+            // per-launch bearer token, and the active provider (so a test
+            // run can restore it afterwards). Driver-only, dev-only.
+            let agent = AgentSettings.shared
+            let provider = agent.providers.first { $0.id == agent.defaultProviderID }
+            return HTTPResponse(json: [
+                "port": Int(AgentServer.shared.port),
+                "token": AgentServer.shared.token,
+                "defaultProvider": provider?.name as Any,
+                "defaultModel": provider?.selectedModel as Any,
+            ])
+
+        case ("POST", "/agent/default"):
+            // Switch the default provider (and optionally its model)
+            // without touching URL or API key — safe to use for restore.
+            guard let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any],
+                  let name = json["name"] as? String
+            else { return HTTPResponse(status: 400, error: "need {name, model?}") }
+            let agent = AgentSettings.shared
+            guard var provider = agent.providers.first(where: { $0.name == name }) else {
+                return HTTPResponse(status: 404, error: "provider not found")
+            }
+            if let model = json["model"] as? String, !model.isEmpty {
+                if !provider.models.contains(model) { provider.models.append(model) }
+                provider.selectedModel = model
+                agent.update(provider)
+            }
+            agent.defaultProviderID = provider.id
+            return HTTPResponse(json: ["ok": true])
+
+        case ("POST", "/agent/provider/remove"):
+            guard let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any],
+                  let name = json["name"] as? String
+            else { return HTTPResponse(status: 400, error: "need {name}") }
+            let agent = AgentSettings.shared
+            guard let provider = agent.providers.first(where: { $0.name == name }) else {
+                return HTTPResponse(status: 404, error: "provider not found")
+            }
+            guard !provider.isBuiltin else {
+                return HTTPResponse(status: 400, error: "cannot remove builtin provider")
+            }
+            agent.remove(provider)
+            return HTTPResponse(json: ["ok": true])
 
         case ("GET", "/settings"):
             return HTTPResponse(json: settingsJSON())

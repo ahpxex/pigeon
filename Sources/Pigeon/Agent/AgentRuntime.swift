@@ -35,8 +35,10 @@ enum AgentRuntime {
 
         Rules:
         - Reply in the user's language.
-        - Plain text only: no markdown headers, no code fences. This prints \
-        directly into a terminal.
+        - Simple markdown is rendered with terminal styling: **bold**, \
+        *italic*, `inline code`, fenced code blocks, lists, headings, \
+        [links](url). Use it when it helps readability. No tables — they \
+        are not rendered.
         - Prefer one tool call that answers the question over asking the \
         user anything.
         - Keep the final answer under ~15 lines.

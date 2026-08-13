@@ -176,20 +176,30 @@ final class AgentServer {
             prompt: prompt,
             cwd: cwd))
 
+        // Markdown in the assistant text is rendered to ANSI as it
+        // streams; the renderer is line-buffered, so flush its partial
+        // line before interleaving any non-markdown output.
+        let renderer = MarkdownANSIRenderer()
+        func flushRenderer() {
+            let tail = renderer.flush()
+            if !tail.isEmpty { sendChunk(connection, tail + "\n") }
+        }
+
         for await event in events {
             switch event {
             case .textDelta(let piece):
-                // Terminal output is plain text; strip stray markdown bold
-                // markers the model sometimes emits despite instructions.
-                sendChunk(connection, piece.replacingOccurrences(of: "**", with: ""))
+                sendChunk(connection, renderer.feed(piece))
             case .toolStart(let name, let summary):
+                flushRenderer()
                 // Dim line so tool activity reads as machinery, not answer.
                 sendChunk(connection, "\u{1B}[2m⏺ \(name): \(summary)\u{1B}[0m\n")
             case .toolEnd(_, let ok, let summary):
                 if !ok {
+                    flushRenderer()
                     sendChunk(connection, "\u{1B}[2m✗ \(summary)\u{1B}[0m\n")
                 }
             case .finished(let reason, let message):
+                flushRenderer()
                 switch reason {
                 case .done, .toolCalls:
                     sendChunk(connection, "\n")

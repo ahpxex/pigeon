@@ -8,7 +8,7 @@ Pigeon 的特色是"终端自带一个轻量 Agent"。设计边界要牢记：
 
 - **不是** Claude Code / Codex 那种强 Agent 的替代品，不做多步规划、不做大型代码改造。
 - 目标是那些"为它专门开一个强 Agent 太重"的日常小任务：看看这个目录里有什么、帮我找某个文件、整理一下这个目录、看看 3000 端口跑的是什么进程、这条报错什么意思……一句话进，一个动作或一句答案出。
-- 用户在设置的 Agent Tab 配置 AI Provider（内置 Anthropic/OpenAI/DeepSeek + 自定义 OpenAI 兼容端点），模型可选、API key 按 Provider 独立存 Keychain —— 这套配置就是给内置 Agent 用的。
+- 用户在设置的 Agent Tab 配置 AI Provider（内置 Anthropic/OpenAI/DeepSeek + 自定义 OpenAI 兼容端点），模型可选、API key 按 Provider 独立存 `~/.config/pigeon/credentials.json`（0600）—— 这套配置就是给内置 Agent 用的。⚠️ 别改回 Keychain：Keychain ACL 绑定代码签名身份，对自编译 app 意味着重编译/更新后反复弹授权框（已踩过）。内置 Provider 的 UUID 是写死的常量，key 按 UUID 索引，UUID 不稳定会让 key 变孤儿。
 - 由此推论：实现上优先低延迟、低成本（小模型可用）、单轮或极少轮工具调用；宁可把任务做小做快，不做长链路。
 
 ## 架构
@@ -42,7 +42,7 @@ Sources/Pigeon/
 │   ├── SettingsView.swift / GeneralSettingsTab / AppearanceSettingsTab
 │   └── TerminalSettingsTab / AgentSettingsTab / AdvancedSettingsTab
 ├── Agent/
-│   └── AgentSettings.swift  #   AI Provider 配置 + Keychain + /models 拉取
+│   └── AgentSettings.swift  #   AI Provider 配置 + credentials 文件 + /models 拉取
 ├── Automation/
 │   └── DriverServer.swift   #   调试驱动服务（localhost HTTP，PIGEON_DRIVER_PORT 开启）
 ├── Resources/OpenMoji/      # 56 个图标 PNG
@@ -90,6 +90,7 @@ open build/Build/Products/Debug/Pigeon.app   # 或从 Xcode 跑
 - **zig 的 HTTP 客户端过不了本机代理**（127.0.0.1:7890，CONNECT 报 400），所以依赖不能靠 `zig build` 自己拉。`scripts/fetch-ghostty-deps.sh` 用 curl/git（走代理没问题）下载后 `zig fetch <本地路径>` 灌进 `vendor/zig-cache`，内容 hash 照常校验。
 - **iTerm2-Color-Schemes 主题包上游 404**（release asset 被删）。它是 lazy 依赖，构建时用 `-Demit-themes=false` 跳过。以后想要主题需另找该 tarball 或升级 Ghostty tag。
 - **Xcode 26 的 Metal 工具链是可选组件**，缺了会报 "cannot execute tool 'metal'"：`xcodebuild -downloadComponent MetalToolchain`。
+- **Debug 构建用本地自签证书 "Pigeon Dev" 签名**（project.yml `CODE_SIGN_IDENTITY`），新机器先跑一次 `scripts/dev-signing-setup.sh`（生成+导入+信任+partition list，中途要输两次密码）。别退回 ad-hoc（`-`）签名：代码身份每次构建都变。构建时如果 xcodebuild 长时间无输出，先查 SecurityAgent 弹框（codesign 等钥匙授权）。
 - 链接需要 `-lstdc++`（libghostty-fat.a 里静态包了 harfbuzz 等 C++ 依赖），已写在 project.yml。
 - App 不能开沙盒（终端要以用户权限起 shell），和 Ghostty/iTerm2 一样。
 
@@ -103,7 +104,11 @@ open build/Build/Products/Debug/Pigeon.app   # 或从 Xcode 跑
 - **AgentServer 是本地 RCE 级端点，必须鉴权**。绑 127.0.0.1 不是信任边界 —— 浏览器标签页能 POST、DNS rebinding 能绕、本机其他进程能读。每个 `/ask` 请求必须：带每次启动新生成的 bearer token（`PIGEON_AGENT_TOKEN`，随端口一起注入 surface env，常量时间比较）、Host 精确等于 `127.0.0.1:<port>`/`localhost:<port>`、不带任何 Origin 头。三者缺一即 403。
 - **命令工具走 argv 数组 + 直接 Process exec，永不过 shell**。模型传 `{"pipeline":[["ls","-la"],["wc","-l"]]}`，每个元素是一个 exec 参数、逐字传递 —— 根本没有 shell 元字符/引号/注入面（黑名单过滤字符串是死路，别走回头路）。纵深防御：binary 只解析白名单里的裸名到绝对路径（`RunReadOnlyCommand.searchDirs`）；per-binary 危险 flag 拒绝（find 的 `-exec/-delete/...`、git 的 `-c/--exec-path/...`）；git 还要求子命令在只读白名单里。管道用 Swift `Pipe()` 串多个 Process，不交给 zsh。
 
-已知改进点：模型偶尔不听 plain-text 指令输出 markdown 星号；无确认机制的可变操作工具还没做（beforeToolCall 挂载点已留）。
+**输出渲染**：助手文本经 `Agent/Render/MarkdownANSIRenderer` 流式转成 ANSI（粗体/斜体/`code` 青色/标题/列表 •/引用 ▌/围栏代码/OSC 8 链接），按行缓冲——inline 标记可能跨 chunk 但不会跨行，所以整行攒齐再渲染。系统提示允许简单 markdown（表格除外，渲染不了）。工具行等非 markdown 输出穿插前要先 flush 渲染器。
+
+**Eval**（`evals/`，改 agent 相关代码后必须跑）：`python3 evals/run.py` 走真实 `/ask` 链路跑确定性回归（mock LLM 脚本化 turns：渲染、工具循环、轮次预算、拒绝逻辑）+ 安全预检（无 token/错 token/Origin/坏 Host 必须 403）；`--suite evals/cases/live.json --live --provider DeepSeek` 跑真实 Provider 质量套件。详见 evals/README.md。
+
+已知改进点：无确认机制的可变操作工具还没做（beforeToolCall 挂载点已留）；语言一致性 eval 需要 LLM judge。
 
 ## 自动化测试（驱动服务）
 
@@ -143,7 +148,7 @@ scripts/pigeonctl quit
 - `GHOSTTY_ACTION_INITIAL_SIZE` / `CELL_SIZE` 被忽略，窗口不会按行列数吸附
 - 无 split、无多窗口管理、无设置界面；配置热重载未接（改 ghostty config 要重启）
 
-已有设置界面（⌘, 打开，SwiftUI Settings scene 分四个 Tab）：General（标签风格、图标分类，`AppSettings`）、Appearance（系统/亮/暗、主题色）、Terminal（内核 GUI 设置：字体=系统等宽字体枚举 Picker、字号滑杆、9 个内置主题卡片（One Dark/GitHub/Solarized/Dracula/Nord/Tokyo Night/Monokai，写完整 16 色 palette）、光标、不透明度；`KernelSettings` 写进配置文件末尾的 pigeon-settings 托管块并热重载，块外内容留给手改且被托管块覆盖）、Agent（AI Provider 管理：内置 Anthropic/OpenAI/DeepSeek + 自定义 Provider（URL+模型+key），模型是枚举 Select 可从 /models 端点刷新，API key 每个 Provider 单独存 Keychain（service dev.ahpx.pigeon.agent），`AgentSettings`）、Advanced（配置文件路径/打开/重载）。程序化打开设置窗口必须走 SwiftUI openSettings 环境动作（`SettingsOpener` 桥接 + `.pigeonOpenSettings` 通知）—— showSettingsWindow: 等老 selector 在 macOS 26 上已失效；cmd+, 在 performKeyEquivalent 里明确不给 ghostty（它默认绑成 open_config）。
+已有设置界面（⌘, 打开，SwiftUI Settings scene 分四个 Tab）：General（标签风格、图标分类，`AppSettings`）、Appearance（系统/亮/暗、主题色）、Terminal（内核 GUI 设置：字体=系统等宽字体枚举 Picker、字号滑杆、9 个内置主题卡片（One Dark/GitHub/Solarized/Dracula/Nord/Tokyo Night/Monokai，写完整 16 色 palette）、光标、不透明度；`KernelSettings` 写进配置文件末尾的 pigeon-settings 托管块并热重载，块外内容留给手改且被托管块覆盖）、Agent（AI Provider 管理：内置 Anthropic/OpenAI/DeepSeek + 自定义 Provider（URL+模型+key），模型是枚举 Select 可从 /models 端点刷新，API key 每个 Provider 单独存 `~/.config/pigeon/credentials.json`，`AgentSettings`）、Advanced（配置文件路径/打开/重载）。程序化打开设置窗口必须走 SwiftUI openSettings 环境动作（`SettingsOpener` 桥接 + `.pigeonOpenSettings` 通知）—— showSettingsWindow: 等老 selector 在 macOS 26 上已失效；cmd+, 在 performKeyEquivalent 里明确不给 ghostty（它默认绑成 open_config）。
 
 路线图（用户随时会调整）：Agent 打磨（多轮上下文记忆、屏幕内容注入、可变操作确认）→ splits → 多窗口。
 

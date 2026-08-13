@@ -1,9 +1,8 @@
 import Foundation
 import Combine
-import Security
 
 /// An AI provider configuration. API keys are NOT stored here — they live
-/// in the Keychain, one entry per provider.
+/// in ~/.config/pigeon/credentials.json, one entry per provider.
 struct AgentProvider: Identifiable, Codable, Equatable {
     var id: UUID = UUID()
     var name: String
@@ -31,20 +30,27 @@ final class AgentSettings: ObservableObject {
 
     private let defaults = UserDefaults.standard
 
+    /// Built-in provider IDs are fixed constants: the credentials entry for a
+    /// provider is keyed by this ID, so it must be identical across
+    /// launches — a random UUID here would orphan every stored API key on
+    /// restart.
     private static let builtins: [AgentProvider] = [
         AgentProvider(
+            id: UUID(uuidString: "6A1F26F1-0001-4B69-9E30-2D2B9A6E0001")!,
             name: "Anthropic",
             baseURL: "https://api.anthropic.com/v1",
             models: ["claude-fable-5", "claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"],
             selectedModel: "claude-sonnet-5",
             isBuiltin: true),
         AgentProvider(
+            id: UUID(uuidString: "6A1F26F1-0002-4B69-9E30-2D2B9A6E0002")!,
             name: "OpenAI",
             baseURL: "https://api.openai.com/v1",
             models: ["gpt-5.1", "gpt-5.1-mini", "gpt-4.1", "o4-mini"],
             selectedModel: "gpt-5.1",
             isBuiltin: true),
         AgentProvider(
+            id: UUID(uuidString: "6A1F26F1-0003-4B69-9E30-2D2B9A6E0003")!,
             name: "DeepSeek",
             baseURL: "https://api.deepseek.com/v1",
             models: ["deepseek-chat", "deepseek-reasoner"],
@@ -53,19 +59,44 @@ final class AgentSettings: ObservableObject {
     ]
 
     private init() {
+        var loaded: [AgentProvider]
         if let data = defaults.data(forKey: "agentProviders"),
            let saved = try? JSONDecoder().decode([AgentProvider].self, from: data),
            !saved.isEmpty {
-            providers = saved
+            loaded = saved
         } else {
-            providers = Self.builtins
+            loaded = Self.builtins
         }
+
+        // Reconcile builtins by name: lists saved before IDs were stable
+        // carry random builtin IDs — remap them (moving any stored key
+        // along) and append builtins introduced by app updates.
+        for canonical in Self.builtins {
+            if let index = loaded.firstIndex(where: { $0.isBuiltin && $0.name == canonical.name }) {
+                if loaded[index].id != canonical.id {
+                    CredentialsStore.move(
+                        from: loaded[index].id.uuidString,
+                        to: canonical.id.uuidString)
+                    loaded[index].id = canonical.id
+                }
+            } else {
+                loaded.append(canonical)
+            }
+        }
+        providers = loaded
+
         if let raw = defaults.string(forKey: "agentDefaultProvider"),
-           let id = UUID(uuidString: raw) {
+           let id = UUID(uuidString: raw),
+           loaded.contains(where: { $0.id == id }) {
             defaultProviderID = id
         } else {
-            defaultProviderID = providers.first?.id
+            defaultProviderID = loaded.first?.id
+            UserDefaults.standard.set(
+                defaultProviderID?.uuidString, forKey: "agentDefaultProvider")
         }
+        // Property observers don't fire during init; persist the
+        // reconciled list explicitly so a fresh install survives restart.
+        persist()
     }
 
     private func persist() {
@@ -90,7 +121,7 @@ final class AgentSettings: ObservableObject {
 
     func remove(_ provider: AgentProvider) {
         guard !provider.isBuiltin else { return }
-        Keychain.delete(account: provider.id.uuidString)
+        CredentialsStore.delete(account: provider.id.uuidString)
         providers.removeAll { $0.id == provider.id }
         if defaultProviderID == provider.id {
             defaultProviderID = providers.first?.id
@@ -102,17 +133,17 @@ final class AgentSettings: ObservableObject {
         providers[index] = provider
     }
 
-    // MARK: API keys (Keychain, one entry per provider)
+    // MARK: API keys (credentials file, one entry per provider)
 
     func apiKey(for provider: AgentProvider) -> String {
-        Keychain.read(account: provider.id.uuidString) ?? ""
+        CredentialsStore.read(account: provider.id.uuidString) ?? ""
     }
 
     func setAPIKey(_ key: String, for provider: AgentProvider) {
         if key.isEmpty {
-            Keychain.delete(account: provider.id.uuidString)
+            CredentialsStore.delete(account: provider.id.uuidString)
         } else {
-            Keychain.write(account: provider.id.uuidString, value: key)
+            CredentialsStore.write(account: provider.id.uuidString, value: key)
         }
     }
 
@@ -158,48 +189,67 @@ final class AgentSettings: ObservableObject {
     }
 }
 
-/// Minimal generic-password Keychain wrapper.
-private enum Keychain {
-    private static let service = "dev.ahpx.pigeon.agent"
+/// API-key store: a user-only JSON file at ~/.config/pigeon/credentials.json
+/// mapping provider ID → key.
+///
+/// Deliberately NOT the macOS Keychain: Keychain item ACLs are bound to
+/// the app's code identity, and for an app built from source that means
+/// authorization prompts whenever the identity shifts — unusable in a
+/// rebuild-heavy dev loop, and confusing after every update. A 0600 file
+/// is the same trust model used by gh/aws/claude CLI credentials; full-
+/// disk encryption covers at rest.
+private enum CredentialsStore {
+    static var url: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".config/pigeon/credentials.json")
+    }
 
     static func read(account: String) -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
-        var result: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data
-        else { return nil }
-        return String(data: data, encoding: .utf8)
+        load()[account]
     }
 
     static func write(account: String, value: String) {
-        let data = Data(value.utf8)
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-        ]
-        let status = SecItemUpdate(
-            query as CFDictionary,
-            [kSecValueData as String: data] as CFDictionary)
-        if status == errSecItemNotFound {
-            var attributes = query
-            attributes[kSecValueData as String] = data
-            SecItemAdd(attributes as CFDictionary, nil)
-        }
+        var all = load()
+        all[account] = value
+        save(all)
     }
 
     static func delete(account: String) {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-        ]
-        SecItemDelete(query as CFDictionary)
+        var all = load()
+        guard all.removeValue(forKey: account) != nil else { return }
+        save(all)
+    }
+
+    /// Re-key an entry to a new account, keeping the existing value at the
+    /// destination if both exist. Used when a provider's ID is migrated to
+    /// its stable form.
+    static func move(from oldAccount: String, to newAccount: String) {
+        guard oldAccount != newAccount else { return }
+        var all = load()
+        guard let value = all.removeValue(forKey: oldAccount) else { return }
+        if all[newAccount] == nil { all[newAccount] = value }
+        save(all)
+    }
+
+    private static func load() -> [String: String] {
+        guard let data = try? Data(contentsOf: url) else { return [:] }
+        return (try? JSONDecoder().decode([String: String].self, from: data)) ?? [:]
+    }
+
+    private static func save(_ all: [String: String]) {
+        let fm = FileManager.default
+        let dir = url.deletingLastPathComponent()
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        guard let data = try? encoder.encode(all) else { return }
+        // Write-then-rename so the file is never observable partially
+        // written, and is 0600 from the moment it exists.
+        let tmp = dir.appendingPathComponent(".credentials.json.tmp")
+        guard fm.createFile(
+            atPath: tmp.path, contents: data,
+            attributes: [.posixPermissions: 0o600])
+        else { return }
+        _ = try? fm.replaceItemAt(url, withItemAt: tmp)
     }
 }

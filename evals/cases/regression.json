@@ -1,0 +1,149 @@
+[
+  {
+    "name": "markdown-inline-styles",
+    "prompt": "eval markdown inline styles",
+    "turns": [
+      {
+        "text": "# Heading One\n## Heading Two\ntext with **bold**, *italic*, `inline code`, ~~gone~~ and a [link](https://example.com).\n"
+      }
+    ],
+    "expect": [
+      { "type": "raw_contains", "value": "\u001b[1m\u001b[4mHeading One\u001b[24m\u001b[22m" },
+      { "type": "raw_contains", "value": "\u001b[1mHeading Two\u001b[22m" },
+      { "type": "raw_contains", "value": "\u001b[1mbold\u001b[22m" },
+      { "type": "raw_contains", "value": "\u001b[3mitalic\u001b[23m" },
+      { "type": "raw_contains", "value": "\u001b[36minline code\u001b[39m" },
+      { "type": "raw_contains", "value": "\u001b[9mgone\u001b[29m" },
+      { "type": "raw_contains", "value": "\u001b]8;;https://example.com\u001b\\" },
+      { "type": "not_contains", "value": "**" },
+      { "type": "not_contains", "value": "# " },
+      { "type": "no_error" }
+    ]
+  },
+  {
+    "name": "markdown-token-split-across-chunks",
+    "prompt": "eval markdown split tokens",
+    "turns": [
+      { "text": "aaaa **bold across many chunks** zzzz\n" }
+    ],
+    "expect": [
+      { "type": "raw_contains", "value": "\u001b[1mbold across many chunks\u001b[22m" },
+      { "type": "not_contains", "value": "**" }
+    ]
+  },
+  {
+    "name": "markdown-blocks",
+    "prompt": "eval markdown blocks",
+    "turns": [
+      {
+        "text": "- first item\n- second with **bold**\n1. numbered\n\n> quoted line\n\n```sh\ngrep -r pattern .\n```\n\n---\ndone\n"
+      }
+    ],
+    "expect": [
+      { "type": "raw_contains", "value": "\u001b[2m•\u001b[22m first item" },
+      { "type": "raw_contains", "value": "\u001b[2m▌ \u001b[22mquoted line" },
+      { "type": "raw_contains", "value": "\u001b[36mgrep -r pattern .\u001b[39m" },
+      { "type": "contains", "value": "1. numbered" },
+      { "type": "contains", "value": "────" },
+      { "type": "not_contains", "value": "```" },
+      { "type": "not_contains", "value": "> quoted" }
+    ]
+  },
+  {
+    "name": "markdown-literals-preserved",
+    "prompt": "eval markdown literals",
+    "turns": [
+      { "text": "the file my_file_name.txt and the glob *.txt stay literal\n" }
+    ],
+    "expect": [
+      { "type": "contains", "value": "my_file_name.txt" },
+      { "type": "contains", "value": "*.txt" },
+      { "type": "raw_not_contains", "value": "\u001b[3m" }
+    ]
+  },
+  {
+    "name": "tool-roundtrip",
+    "prompt": "eval tool roundtrip",
+    "fixture": { "alpha.txt": "hello\n", "beta.txt": "world\n" },
+    "turns": [
+      { "tool_calls": [ { "name": "list_dir", "arguments": { "path": "." } } ] },
+      { "text": "two files: **alpha** and beta\n" }
+    ],
+    "expect": [
+      { "type": "tool_used", "value": "list_dir" },
+      { "type": "raw_contains", "value": "\u001b[1malpha\u001b[22m" },
+      { "type": "contains", "value": "two files" },
+      { "type": "no_error" }
+    ]
+  },
+  {
+    "name": "multiple-tools-one-turn",
+    "prompt": "eval multiple tools",
+    "fixture": { "a.txt": "line1\nline2\n" },
+    "turns": [
+      {
+        "tool_calls": [
+          { "name": "list_dir", "arguments": { "path": "." } },
+          { "name": "read_file", "arguments": { "path": "a.txt" } }
+        ]
+      },
+      { "text": "saw both\n" }
+    ],
+    "expect": [
+      { "type": "tool_used", "value": "list_dir" },
+      { "type": "tool_used", "value": "read_file" },
+      { "type": "contains", "value": "saw both" }
+    ]
+  },
+  {
+    "name": "run-command-pipeline",
+    "prompt": "eval run command pipeline",
+    "fixture": { "one.txt": "1\n", "two.txt": "2\n" },
+    "turns": [
+      {
+        "tool_calls": [
+          { "name": "run_command", "arguments": { "pipeline": [ [ "ls" ], [ "wc", "-l" ] ] } }
+        ]
+      },
+      { "text": "counted the entries\n" }
+    ],
+    "expect": [
+      { "type": "contains", "value": "⏺ run_command: ls | wc -l" },
+      { "type": "contains", "value": "counted the entries" },
+      { "type": "no_error" }
+    ]
+  },
+  {
+    "name": "disallowed-command-rejected",
+    "prompt": "eval disallowed command",
+    "turns": [
+      {
+        "tool_calls": [
+          { "name": "run_command", "arguments": { "pipeline": [ [ "rm", "-rf", "/tmp/x" ] ] } }
+        ]
+      },
+      { "text": "understood, cannot do that\n" }
+    ],
+    "expect": [
+      { "type": "contains", "value": "✗" },
+      { "type": "contains", "value": "拒绝" },
+      { "type": "contains", "value": "cannot do that" }
+    ]
+  },
+  {
+    "name": "round-budget-exhausted",
+    "prompt": "eval round budget",
+    "turns": [
+      { "tool_calls": [ { "name": "list_dir", "arguments": { "path": "." } } ] },
+      { "tool_calls": [ { "name": "list_dir", "arguments": { "path": "." } } ] },
+      { "tool_calls": [ { "name": "list_dir", "arguments": { "path": "." } } ] },
+      { "tool_calls": [ { "name": "list_dir", "arguments": { "path": "." } } ] },
+      { "tool_calls": [ { "name": "list_dir", "arguments": { "path": "." } } ] },
+      { "tool_calls": [ { "name": "list_dir", "arguments": { "path": "." } } ] }
+    ],
+    "expect": [
+      { "type": "count", "value": "⏺", "n": 6 },
+      { "type": "contains", "value": "round budget" }
+    ]
+  }
+]

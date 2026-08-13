@@ -35,8 +35,11 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         # libghostty statically links C++ dependencies (harfbuzz, etc.)
         OTHER_LDFLAGS: "-lstdc++"
-        CODE_SIGN_IDENTITY: "-"
-        CODE_SIGN_STYLE: Automatic
+        # Stable local identity (created by scripts/dev-signing-setup.sh):
+        # ad-hoc signing would give every rebuild a new code identity and
+        # re-trigger the Keychain password prompt for stored API keys.
+        CODE_SIGN_IDENTITY: "Pigeon Dev"
+        CODE_SIGN_STYLE: Manual
         ENABLE_HARDENED_RUNTIME: false
         # A terminal cannot be sandboxed: it must spawn shells with full
         # user privileges (same as Ghostty, iTerm2, Terminal.app).
