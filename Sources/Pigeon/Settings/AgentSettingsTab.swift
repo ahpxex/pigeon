@@ -41,6 +41,7 @@ private struct ProviderSection: View {
     @State private var apiKey: String = ""
     @State private var fetching = false
     @State private var fetchError: String? = nil
+    @State private var autoFetchTask: Task<Void, Never>? = nil
 
     var body: some View {
         Section(provider.isBuiltin ? provider.name : "Custom Provider") {
@@ -48,17 +49,29 @@ private struct ProviderSection: View {
                 TextField("Name", text: binding(\.name))
                 TextField("Base URL", text: binding(\.baseURL), prompt: Text("https://api.example.com/v1"))
                     .autocorrectionDisabled()
+                    .onChange(of: currentBaseURL) { _ in
+                        if !apiKey.isEmpty { scheduleAutoFetch() }
+                    }
             }
 
             SecureField("API key", text: $apiKey, prompt: Text("Stored in ~/.config/pigeon"))
                 .onSubmit { agent.setAPIKey(apiKey, for: provider) }
                 .onChange(of: apiKey) { newValue in
+                    // Compare against the stored key BEFORE writing so the
+                    // onAppear echo doesn't refetch on every settings open.
+                    let stored = agent.apiKey(for: provider)
                     agent.setAPIKey(newValue, for: provider)
+                    let effective = agent.apiKey(for: provider)
+                    if effective != stored, !effective.isEmpty {
+                        scheduleAutoFetch()
+                    }
                 }
 
             HStack {
                 if provider.models.isEmpty {
-                    Text("No models — set the URL and key, then refresh")
+                    Text(apiKey.isEmpty
+                        ? "Models load from the provider once a key is set"
+                        : "No models yet — check the key, or refresh")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
@@ -99,7 +112,32 @@ private struct ProviderSection: View {
                     .foregroundStyle(.red)
             }
         }
-        .onAppear { apiKey = agent.apiKey(for: provider) }
+        .onAppear {
+            apiKey = agent.apiKey(for: provider)
+            // The enumeration lives remotely; if we have a key but no
+            // cached list yet, fetch without waiting for a click.
+            if !apiKey.isEmpty, provider.models.isEmpty {
+                scheduleAutoFetch(after: 0.1)
+            }
+        }
+        .onDisappear { autoFetchTask?.cancel() }
+    }
+
+    /// Debounced fetch: a pasted key lands as one change, but typing (or
+    /// several quick edits) shouldn't fire a request per keystroke.
+    private func scheduleAutoFetch(after delay: TimeInterval = 0.8) {
+        autoFetchTask?.cancel()
+        autoFetchTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            // A custom provider mid-setup has no URL yet; don't spam errors.
+            guard !currentBaseURL.isEmpty else { return }
+            refreshModels()
+        }
+    }
+
+    private var currentBaseURL: String {
+        agent.providers.first { $0.id == provider.id }?.baseURL ?? provider.baseURL
     }
 
     private func binding<T>(_ keyPath: WritableKeyPath<AgentProvider, T>) -> Binding<T> {

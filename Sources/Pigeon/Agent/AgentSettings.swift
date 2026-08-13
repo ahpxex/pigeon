@@ -34,27 +34,31 @@ final class AgentSettings: ObservableObject {
     /// provider is keyed by this ID, so it must be identical across
     /// launches — a random UUID here would orphan every stored API key on
     /// restart.
+    ///
+    /// Model lists are NOT seeded: they come from each provider's /models
+    /// endpoint (fetched automatically once a key is set) and persist as a
+    /// cache. A hardcoded list is stale the day it ships.
     private static let builtins: [AgentProvider] = [
         AgentProvider(
             id: UUID(uuidString: "6A1F26F1-0001-4B69-9E30-2D2B9A6E0001")!,
             name: "Anthropic",
             baseURL: "https://api.anthropic.com/v1",
-            models: ["claude-fable-5", "claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"],
-            selectedModel: "claude-sonnet-5",
+            models: [],
+            selectedModel: "",
             isBuiltin: true),
         AgentProvider(
             id: UUID(uuidString: "6A1F26F1-0002-4B69-9E30-2D2B9A6E0002")!,
             name: "OpenAI",
             baseURL: "https://api.openai.com/v1",
-            models: ["gpt-5.1", "gpt-5.1-mini", "gpt-4.1", "o4-mini"],
-            selectedModel: "gpt-5.1",
+            models: [],
+            selectedModel: "",
             isBuiltin: true),
         AgentProvider(
             id: UUID(uuidString: "6A1F26F1-0003-4B69-9E30-2D2B9A6E0003")!,
             name: "DeepSeek",
             baseURL: "https://api.deepseek.com/v1",
-            models: ["deepseek-chat", "deepseek-reasoner"],
-            selectedModel: "deepseek-chat",
+            models: [],
+            selectedModel: "",
             isBuiltin: true),
     ]
 
