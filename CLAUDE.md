@@ -98,9 +98,9 @@ open build/Build/Products/Debug/Pigeon.app   # 或从 Xcode 跑
 
 入口就是终端本身：输入合法命令照常执行；首词不是命令时 zsh 调 `command_not_found_handler`（构建时追加到打包的 shell integration，`scripts/pigeon-integration.zsh`），整行作为自然语言 curl 到 app 内的 AgentServer（常驻 localhost，端口经 surface env `PIGEON_AGENT_PORT` 注入），回答以 chunked 流直接打回 pty（工具行灰色 ANSI）。Ctrl+C 打断 curl 即取消。
 
-运行时架构抄 Pi 的设计语法（等效 Swift 实现在 `Agent/`）：ChatStreamClient 遵守"永不 throw"契约（错误编码进事件流）；AgentRuntime 是 ≤6 轮的顺序工具 loop；事件类型化（AgentEvent）。工具分两档：只读（run_command/list_dir/read_file，自由执行）与可变（run_mutating_command/write_file，`requiresConfirmation`，每次调用都要用户确认）。纯 ASCII 单短词不触发 agent（多半是敲错命令），含 CJK 的输入一律视为自然语言。DeepSeek 是一等公民（OpenAI 兼容 /chat/completions + SSE + function calling），任何同协议端点即插即用。
+运行时架构抄 Pi 的设计语法（等效 Swift 实现在 `Agent/`）：ChatStreamClient 遵守"永不 throw"契约（错误编码进事件流）；AgentRuntime 是 ≤6 轮的顺序工具 loop；事件类型化（AgentEvent）。工具按可恢复性分档：只读（run_command/list_dir/read_file）与可恢复变更（mv/cp/mkdir/chmod/git add·commit、写新文件、`trash`=原生 FileManager.trashItem 进废纸篓）都自由执行；只有**不可逆调用**（rm、git clean、git reset --hard、覆盖已有文件）逐次要用户确认——敏感性由工具按"这一次调用"判定（`confirmationRequest(arguments:cwd:)` 返回非 nil），不是按工具整体。删除的首选是 trash 不是 rm（提示语已引导）。纯 ASCII 单短词不触发 agent（多半是敲错命令），含 CJK 的输入一律视为自然语言。DeepSeek 是一等公民（OpenAI 兼容 /chat/completions + SSE + function calling），任何同协议端点即插即用。
 
-**可变操作确认协议**：runtime 在执行 `requiresConfirmation` 工具前调 RunConfig.confirm 闭包（nil=拒绝）；AgentServer 的实现是往流里发一行哨兵 `\x01PIGEON_CONFIRM\x01<id>\x01<动作描述>`，zsh 钩子逐行读流、认出哨兵后在 /dev/tty 上问 `[y/N]`，答案 POST 回 `/confirm`（与 /ask 同一套鉴权），ConfirmationBroker 唤醒等待的 agent；120s 无应答或 Ctrl+C（连接断）都算拒绝。拒绝作为工具结果喂回模型（提示语要求它不要重试）。可变命令白名单只含本地操作（mv/cp/mkdir/rm/chmod/git 本地子命令等，git push/pull/fetch 拒绝），依旧 argv 数组直接 exec 永不过 shell。
+**确认协议（自然语言优先）**：确认内容是模型传的 `intent`（用户语言的一句"将会发生什么"，如"将永久删除 bbb.txt，此操作无法恢复"），命令本身只作为一行暗色 `→ rm bbb.txt` 审计行。流程：runtime 执行前调 RunConfig.confirm(message, command)（nil=拒绝）；AgentServer 往流里发暗色命令行 + 哨兵行 `\x01PIGEON_CONFIRM\x01<id>\x01<message>`，zsh 钩子逐行读流、认出哨兵后在 /dev/tty 上问 `⚠ <message> — allow? [y/N]`，答案 POST 回 `/confirm`（与 /ask 同一套鉴权），ConfirmationBroker 唤醒等待的 agent；120s 无应答或 Ctrl+C（连接断）都算拒绝。拒绝作为工具结果喂回模型（提示语要求它不要重试）。可变命令白名单只含本地操作（git push/pull/fetch 拒绝），依旧 argv 数组直接 exec 永不过 shell。
 
 **安全（这两条是硬红线，别退回去）：**
 - **AgentServer 是本地 RCE 级端点，必须鉴权**。绑 127.0.0.1 不是信任边界 —— 浏览器标签页能 POST、DNS rebinding 能绕、本机其他进程能读。每个 `/ask` 请求必须：带每次启动新生成的 bearer token（`PIGEON_AGENT_TOKEN`，随端口一起注入 surface env，常量时间比较）、Host 精确等于 `127.0.0.1:<port>`/`localhost:<port>`、不带任何 Origin 头。三者缺一即 403。
@@ -110,7 +110,7 @@ open build/Build/Products/Debug/Pigeon.app   # 或从 Xcode 跑
 
 **Eval**（`evals/`，改 agent 相关代码后必须跑）：`python3 evals/run.py` 走真实 `/ask` 链路跑确定性回归（mock LLM 脚本化 turns：渲染、工具循环、轮次预算、拒绝逻辑）+ 安全预检（无 token/错 token/Origin/坏 Host 必须 403）；`--suite evals/cases/live.json --live --provider DeepSeek` 跑真实 Provider 质量套件。详见 evals/README.md。
 
-已知改进点：语言一致性 eval 需要 LLM judge；确认应答目前只有 y/N 两态（没有"本次会话总是允许"）。
+已知改进点：语言一致性 eval 需要 LLM judge；确认应答目前只有 y/N 两态（没有"本次会话总是允许"）；`intent` 缺失时确认文案回落到 "Run: <argv>"（英文）。
 
 ## 自动化测试（驱动服务）
 

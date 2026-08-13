@@ -14,9 +14,10 @@ enum AgentRuntime {
         var model: String
         var prompt: String
         var cwd: String
-        /// Asks the user to approve one mutating tool call, described by
-        /// a human-readable summary. nil (no way to ask) means deny.
-        var confirm: (@Sendable (String) async -> Bool)? = nil
+        /// Asks the user to approve one destructive tool call:
+        /// (natural-language message, literal command). nil (no way to
+        /// ask) means deny.
+        var confirm: (@Sendable (String, String) async -> Bool)? = nil
     }
 
     static func run(_ config: RunConfig) -> AsyncStream<AgentEvent> {
@@ -45,11 +46,14 @@ enum AgentRuntime {
         are not rendered.
         - Prefer one tool call that answers the question over asking the \
         user anything.
-        - Mutating tools (run_mutating_command, write_file) prompt the \
-        user to confirm each call: use them only when the user asked for \
-        a change, keep each call minimal, and if the user declines, stop \
-        and acknowledge — never retry. For destructive steps (rm), list \
-        what would be affected with a read-only tool first.
+        - File changes: use mutating tools only when the user asked for a \
+        change. Reversible operations (move, copy, create, trash, git \
+        add/commit) run immediately. To delete, ALWAYS prefer `trash` \
+        over rm — it's recoverable and needs no confirmation. Destructive \
+        calls (rm, git clean, git reset --hard, overwriting an existing \
+        file) prompt the user: set `intent` to one short sentence in the \
+        user's language saying exactly what is lost. If the user \
+        declines, stop and acknowledge — never retry.
         - Keep the final answer under ~15 lines.
 
         Context: working directory is \(cwd), OS is macOS.
@@ -134,20 +138,19 @@ enum AgentRuntime {
 
         let arguments = (try? JSONSerialization.jsonObject(
             with: Data(call.function.arguments.utf8))) as? [String: Any] ?? [:]
-        let summary = toolSummary(
-            name: call.function.name, arguments: arguments, cwd: config.cwd)
+        let summary = toolSummary(name: call.function.name, arguments: arguments)
 
-        // Permission gate: every mutating call needs an explicit yes from
-        // the user, per call, with the exact action shown. No way to ask
-        // (headless consumer) means no.
-        if tool.requiresConfirmation {
-            let allowed = await config.confirm?(summary) ?? false
+        // Permission gate: reversible calls run freely; a destructive
+        // call (the tool decides per invocation) needs an explicit yes,
+        // asked in natural language. No way to ask means no.
+        if let request = tool.confirmationRequest(arguments: arguments, cwd: config.cwd) {
+            let allowed = await config.confirm?(request.message, request.command) ?? false
             if !allowed {
                 let result = AgentToolResult(
                     ok: false,
                     output: "the user declined this action; do not retry it — "
                         + "acknowledge and adjust",
-                    display: "declined: \(summary)")
+                    display: "declined: \(request.command)")
                 continuation.yield(.toolEnd(name: call.function.name, ok: false, summary: result.display))
                 return result
             }
@@ -161,16 +164,13 @@ enum AgentRuntime {
     }
 
     /// Short human label for a tool call, from whichever arg carries the
-    /// intent. This is also the text of the confirmation prompt, so it
-    /// must show the full action — never truncate the argv.
-    private static func toolSummary(
-        name: String, arguments: [String: Any], cwd: String
-    ) -> String {
-        if name == "write_file" {
-            return WriteFile.confirmSummary(arguments: arguments, cwd: cwd)
-        }
+    /// intent.
+    private static func toolSummary(name: String, arguments: [String: Any]) -> String {
         if let pipeline = arguments["pipeline"] as? [[String]] {
             return pipeline.map { $0.joined(separator: " ") }.joined(separator: " | ")
+        }
+        if let paths = arguments["paths"] as? [String] {
+            return paths.joined(separator: " ")
         }
         if let path = arguments["path"] as? String { return path }
         return name

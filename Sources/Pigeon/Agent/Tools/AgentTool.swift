@@ -27,17 +27,30 @@ struct AgentToolResult {
     var display: String
 }
 
-/// A capability the agent may invoke. Read-only tools run freely; a tool
-/// that mutates anything sets `requiresConfirmation` and the runtime
-/// gates every call behind an explicit user yes/no.
+/// What the user is asked before a destructive call runs. `message` is
+/// natural language in the user's language (the model's `intent`, with a
+/// fallback) — users don't read argv. `command` is the literal action,
+/// shown dimmed for whoever wants to audit it.
+struct ConfirmationRequest {
+    var message: String
+    var command: String
+}
+
+/// A capability the agent may invoke. Reversible calls run freely —
+/// including most mutations (move, copy, create, trash). A call returns a
+/// ConfirmationRequest only when it would destroy something irrecoverably
+/// (rm, git clean/reset --hard, overwriting an existing file), and the
+/// runtime then gates it behind an explicit user yes/no.
 protocol AgentTool {
     var spec: AgentToolSpec { get }
-    /// Whether every invocation must be confirmed by the user first.
-    var requiresConfirmation: Bool { get }
+    /// Per-call sensitivity check: nil = run freely.
+    func confirmationRequest(arguments: [String: Any], cwd: String) -> ConfirmationRequest?
     /// Execute with parsed arguments, relative to the caller's cwd.
     func execute(arguments: [String: Any], cwd: String) async -> AgentToolResult
 }
 
 extension AgentTool {
-    var requiresConfirmation: Bool { false }
+    func confirmationRequest(arguments: [String: Any], cwd: String) -> ConfirmationRequest? {
+        nil
+    }
 }

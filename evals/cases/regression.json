@@ -373,10 +373,10 @@
     ]
   },
   {
-    "name": "write-file-confirm-allow",
-    "prompt": "eval write file allow",
+    "name": "write-new-file-no-confirm",
+    "prompt": "eval write new file",
     "fixture": {},
-    "confirm": "allow",
+    "confirm": "deny",
     "turns": [
       {
         "tool_calls": [
@@ -395,12 +395,8 @@
     ],
     "expect": [
       {
-        "type": "contains",
-        "value": "[confirm-request] write_file note.txt"
-      },
-      {
-        "type": "contains",
-        "value": "new file"
+        "type": "not_contains",
+        "value": "[confirm-request]"
       },
       {
         "type": "tool_used",
@@ -421,9 +417,11 @@
     ]
   },
   {
-    "name": "write-file-confirm-deny",
-    "prompt": "eval write file deny",
-    "fixture": {},
+    "name": "overwrite-existing-confirm-deny",
+    "prompt": "eval overwrite existing file",
+    "fixture": {
+      "note.txt": "old content\n"
+    },
     "confirm": "deny",
     "turns": [
       {
@@ -432,41 +430,43 @@
             "name": "write_file",
             "arguments": {
               "path": "note.txt",
-              "content": "hello pigeon\n"
+              "content": "new content\n",
+              "intent": "覆盖 note.txt 的原有内容"
             }
           }
         ]
       },
       {
-        "text": "okay, not writing\n"
+        "text": "okay, keeping the file\n"
       }
     ],
     "expect": [
       {
         "type": "contains",
-        "value": "[confirm-request] write_file note.txt"
+        "value": "[confirm-request] 覆盖 note.txt 的原有内容"
       },
       {
         "type": "contains",
         "value": "declined"
       },
       {
-        "type": "fixture_missing",
-        "value": "note.txt"
+        "type": "fixture_exists",
+        "value": "note.txt",
+        "contains": "old content"
       },
       {
         "type": "contains",
-        "value": "okay, not writing"
+        "value": "okay, keeping the file"
       }
     ]
   },
   {
-    "name": "mutating-command-confirm-allow",
-    "prompt": "eval mutating rename",
+    "name": "mv-runs-without-confirm",
+    "prompt": "eval mv without confirm",
     "fixture": {
       "a.txt": "content\n"
     },
-    "confirm": "allow",
+    "confirm": "deny",
     "turns": [
       {
         "tool_calls": [
@@ -490,8 +490,8 @@
     ],
     "expect": [
       {
-        "type": "contains",
-        "value": "[confirm-request] mv a.txt b.txt"
+        "type": "not_contains",
+        "value": "[confirm-request]"
       },
       {
         "type": "contains",
@@ -513,7 +513,97 @@
     ]
   },
   {
-    "name": "mutating-remote-git-rejected",
+    "name": "rm-confirm-natural-language",
+    "prompt": "eval rm with intent",
+    "fixture": {
+      "a.txt": "content\n"
+    },
+    "confirm": "allow",
+    "turns": [
+      {
+        "tool_calls": [
+          {
+            "name": "run_mutating_command",
+            "arguments": {
+              "pipeline": [
+                [
+                  "rm",
+                  "a.txt"
+                ]
+              ],
+              "intent": "永久删除 a.txt，无法恢复"
+            }
+          }
+        ]
+      },
+      {
+        "text": "deleted\n"
+      }
+    ],
+    "expect": [
+      {
+        "type": "contains",
+        "value": "[confirm-request] 永久删除 a.txt，无法恢复"
+      },
+      {
+        "type": "contains",
+        "value": "→ rm a.txt"
+      },
+      {
+        "type": "fixture_missing",
+        "value": "a.txt"
+      },
+      {
+        "type": "contains",
+        "value": "deleted"
+      }
+    ]
+  },
+  {
+    "name": "trash-runs-without-confirm",
+    "prompt": "eval trash file",
+    "fixture": {
+      "junk.txt": "junk\n"
+    },
+    "confirm": "deny",
+    "turns": [
+      {
+        "tool_calls": [
+          {
+            "name": "trash",
+            "arguments": {
+              "paths": [
+                "junk.txt"
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "text": "moved to trash\n"
+      }
+    ],
+    "expect": [
+      {
+        "type": "not_contains",
+        "value": "[confirm-request]"
+      },
+      {
+        "type": "contains",
+        "value": "⏺ trash: junk.txt"
+      },
+      {
+        "type": "fixture_missing",
+        "value": "junk.txt"
+      },
+      {
+        "type": "contains",
+        "value": "moved to trash"
+      }
+    ]
+  },
+  {
+    "name": "git-push-rejected-even-if-confirmed",
     "prompt": "eval mutating git push",
     "fixture": {},
     "confirm": "allow",

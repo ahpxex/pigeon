@@ -203,10 +203,11 @@ final class AgentServer {
             model: provider.selectedModel,
             prompt: prompt,
             cwd: cwd,
-            confirm: { [weak self] summary in
+            confirm: { [weak self] message, command in
                 guard let self else { return false }
                 return await self.requestConfirmation(
-                    summary: summary,
+                    message: message,
+                    command: command,
                     connection: connection,
                     flush: { await MainActor.run { flushRenderer() } })
             }))
@@ -240,22 +241,19 @@ final class AgentServer {
     }
 
     /// Emit a confirmation request into the stream and wait for the
-    /// shell hook to POST /confirm. Timeout or cancellation (user hit
-    /// Ctrl+C) counts as a deny.
+    /// shell hook to POST /confirm. The prompt line carries the natural-
+    /// language message; the literal command goes first as a dim audit
+    /// line. Timeout or cancellation (user hit Ctrl+C) counts as a deny.
     private func requestConfirmation(
-        summary: String,
+        message: String,
+        command: String,
         connection: NWConnection,
         flush: @escaping @Sendable () async -> Void
     ) async -> Bool {
         await flush()
         let id = UUID().uuidString
-        // The summary is argv-derived, so scrub control characters that
-        // could break the one-line sentinel framing.
-        let clean = String(summary.map { char -> Character in
-            guard let scalar = char.unicodeScalars.first, scalar.value < 32 else { return char }
-            return " "
-        })
-        sendChunk(connection, "\u{01}PIGEON_CONFIRM\u{01}\(id)\u{01}\(clean)\n")
+        sendChunk(connection, "\u{1B}[2m→ \(scrubbed(command))\u{1B}[0m\n")
+        sendChunk(connection, "\u{01}PIGEON_CONFIRM\u{01}\(id)\u{01}\(scrubbed(message))\n")
         return await withTaskCancellationHandler {
             await ConfirmationBroker.shared.wait(id: id, timeout: 120)
         } onCancel: {
@@ -263,6 +261,15 @@ final class AgentServer {
                 ConfirmationBroker.shared.resolve(id: id, allow: false)
             }
         }
+    }
+
+    /// Model- and argv-derived text goes into one-line frames; scrub
+    /// control characters so nothing breaks the framing.
+    private func scrubbed(_ text: String) -> String {
+        String(text.map { char -> Character in
+            guard let scalar = char.unicodeScalars.first, scalar.value < 32 else { return char }
+            return " "
+        })
     }
 
     /// Bearer token (constant-time compared) + exact loopback Host +

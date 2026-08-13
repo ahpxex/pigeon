@@ -9,6 +9,7 @@ enum BuiltinTools {
         ReadFileHead(),
         RunMutatingCommand(),
         WriteFile(),
+        TrashItem(),
     ]
 
     static func tool(named name: String) -> AgentTool? {
