@@ -9,23 +9,25 @@ struct AgentSettingsTab: View {
     var body: some View {
         Form {
             Section {
-                Picker("Default provider", selection: $agent.defaultProviderID) {
+                Picker("Provider", selection: $agent.defaultProviderID) {
                     ForEach(agent.providers) { provider in
                         Text(provider.name).tag(Optional(provider.id))
                     }
                 }
-            }
-
-            ForEach(agent.providers) { provider in
-                ProviderSection(provider: provider)
-            }
-
-            Section {
                 Button {
-                    agent.addCustomProvider()
+                    let provider = agent.addCustomProvider()
+                    agent.defaultProviderID = provider.id
                 } label: {
                     Label("Add Custom Provider", systemImage: "plus")
                 }
+            }
+
+            // Only the selected provider's config is shown — it IS the one
+            // the agent uses, so there is no wrong field to paste a key
+            // into. .id() resets the section's @State on switch.
+            if let provider = agent.providers.first(where: { $0.id == agent.defaultProviderID }) {
+                ProviderSection(provider: provider)
+                    .id(provider.id)
             }
         }
         .formStyle(.grouped)
@@ -41,9 +43,7 @@ private struct ProviderSection: View {
     @State private var fetchError: String? = nil
 
     var body: some View {
-        // Mark the active provider in the header — the key must go into
-        // THIS provider's field, a classic wrong-section paste trap.
-        Section(sectionTitle) {
+        Section(provider.isBuiltin ? provider.name : "Custom Provider") {
             if !provider.isBuiltin {
                 TextField("Name", text: binding(\.name))
                 TextField("Base URL", text: binding(\.baseURL), prompt: Text("https://api.example.com/v1"))
@@ -100,11 +100,6 @@ private struct ProviderSection: View {
             }
         }
         .onAppear { apiKey = agent.apiKey(for: provider) }
-    }
-
-    private var sectionTitle: String {
-        let name = provider.isBuiltin ? provider.name : "Custom"
-        return agent.defaultProviderID == provider.id ? "\(name) — Default" : name
     }
 
     private func binding<T>(_ keyPath: WritableKeyPath<AgentProvider, T>) -> Binding<T> {

@@ -148,7 +148,7 @@ scripts/pigeonctl quit
 - `GHOSTTY_ACTION_INITIAL_SIZE` / `CELL_SIZE` 被忽略，窗口不会按行列数吸附
 - 无 split、无多窗口管理、无设置界面；配置热重载未接（改 ghostty config 要重启）
 
-已有设置界面（⌘, 打开，SwiftUI Settings scene 分四个 Tab）：General（标签风格、图标分类，`AppSettings`）、Appearance（系统/亮/暗、主题色）、Terminal（内核 GUI 设置：字体=系统等宽字体枚举 Picker、字号滑杆、9 个内置主题卡片（One Dark/GitHub/Solarized/Dracula/Nord/Tokyo Night/Monokai，写完整 16 色 palette）、光标、不透明度；`KernelSettings` 写进配置文件末尾的 pigeon-settings 托管块并热重载，块外内容留给手改且被托管块覆盖）、Agent（AI Provider 管理：内置 Anthropic/OpenAI/DeepSeek + 自定义 Provider（URL+模型+key），模型是枚举 Select 可从 /models 端点刷新，API key 每个 Provider 单独存 `~/.config/pigeon/credentials.json`，`AgentSettings`）、Advanced（配置文件路径/打开/重载）。程序化打开设置窗口必须走 SwiftUI openSettings 环境动作（`SettingsOpener` 桥接 + `.pigeonOpenSettings` 通知）—— showSettingsWindow: 等老 selector 在 macOS 26 上已失效；cmd+, 在 performKeyEquivalent 里明确不给 ghostty（它默认绑成 open_config）。
+已有设置界面（⌘, 打开，SwiftUI Settings scene 分四个 Tab）：General（标签风格、图标分类，`AppSettings`）、Appearance（系统/亮/暗、主题色）、Terminal（内核 GUI 设置：字体=系统等宽字体枚举 Picker、字号滑杆、9 个内置主题卡片（One Dark/GitHub/Solarized/Dracula/Nord/Tokyo Night/Monokai，写完整 16 色 palette）、光标、不透明度；`KernelSettings` 写进配置文件末尾的 pigeon-settings 托管块并热重载，块外内容留给手改且被托管块覆盖）、Agent（AI Provider 管理：顶部 Picker 选 Provider（选中即默认），下方只显示选中者的配置——内置 Anthropic/OpenAI/DeepSeek + 自定义 Provider（URL+模型+key），模型是枚举 Select 可从 /models 端点刷新，API key 每个 Provider 单独存 `~/.config/pigeon/credentials.json`，`AgentSettings`）、Advanced（配置文件路径/打开/重载）。程序化打开设置窗口必须走 SwiftUI openSettings 环境动作（`SettingsOpener` 桥接 + `.pigeonOpenSettings` 通知）—— showSettingsWindow: 等老 selector 在 macOS 26 上已失效；cmd+, 在 performKeyEquivalent 里明确不给 ghostty（它默认绑成 open_config）。
 
 路线图（用户随时会调整）：Agent 打磨（多轮上下文记忆、屏幕内容注入、可变操作确认）→ splits → 多窗口。
 
