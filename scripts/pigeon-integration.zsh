@@ -51,6 +51,41 @@ if [[ -n "$PIGEON_AGENT_PORT" ]]; then
     autoload -Uz add-zsh-hook
     add-zsh-hook precmd _pigeon_install_prose_highlighting
 
+    # --- loading spinner ---------------------------------------------------
+    # Model latency means 1-3 s of dead air after enter (and again after
+    # each tool round). Animate a dim spinner on /dev/tty whenever we're
+    # waiting on the stream; it never touches the stream itself, so
+    # nothing pollutes the captured output. The 0.15 s initial delay
+    # keeps it invisible during rapid line bursts.
+    _pigeon_spin_loop() {
+        local -a frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+        local i=1
+        command sleep 0.15
+        while :; do
+            print -n -- $'\r\e[2m'"${frames[i]}"$'\e[0m' > /dev/tty
+            (( i = i % $#frames + 1 ))
+            command sleep 0.08
+        done
+    }
+    # The spinner replaces the cursor: hide it while streaming (the
+    # blinking block next to the animation reads as noise), restore it
+    # whenever the user needs to type or the stream ends.
+    _pigeon_spinner_start() {
+        print -n -- $'\e[?25l' > /dev/tty
+        _pigeon_spin_loop &!
+        typeset -g _pigeon_spinner_pid=$!
+    }
+    _pigeon_spinner_stop() {
+        [[ -n "${_pigeon_spinner_pid:-}" ]] || return 0
+        kill "$_pigeon_spinner_pid" 2>/dev/null
+        _pigeon_spinner_pid=""
+        print -n -- $'\r\e[2K' > /dev/tty
+    }
+    _pigeon_stream_cleanup() {
+        _pigeon_spinner_stop
+        print -n -- $'\e[?25h' > /dev/tty
+    }
+
     command_not_found_handler() {
         # Reconstruct the original line as best zsh lets us.
         local prompt="$*"
@@ -72,6 +107,9 @@ if [[ -n "$PIGEON_AGENT_PORT" ]]; then
         # line — so line-wise reading costs nothing.)
         local confirm_prefix=$'\1PIGEON_CONFIRM\1'
         local line payload confirm_id display answer
+        setopt localoptions no_notify no_monitor localtraps
+        trap '_pigeon_stream_cleanup' EXIT INT TERM
+        _pigeon_spinner_start
         command curl -sN --max-time 600 \
             -X POST "http://127.0.0.1:${PIGEON_AGENT_PORT}/ask" \
             -H "Content-Type: text/plain; charset=utf-8" \
@@ -79,14 +117,15 @@ if [[ -n "$PIGEON_AGENT_PORT" ]]; then
             -H "X-Pigeon-Cwd: $PWD" \
             --data-binary "$prompt" \
         | while IFS= read -r line || [[ -n "$line" ]]; do
+            _pigeon_spinner_stop
             if [[ "$line" == "${confirm_prefix}"* ]]; then
                 payload="${line#${confirm_prefix}}"
                 confirm_id="${payload%%$'\1'*}"
                 display="${payload#*$'\1'}"
                 answer=n
-                print -n -- $'\e[33m'"⚠ ${display} — allow? [y/N] "$'\e[0m' > /dev/tty
+                print -n -- $'\e[?25h\e[33m'"⚠ ${display} — allow? [y/N] "$'\e[0m' > /dev/tty
                 read -q answer < /dev/tty || answer=n
-                print > /dev/tty
+                print -n -- $'\n\e[?25l' > /dev/tty
                 command curl -s -o /dev/null --max-time 10 \
                     -X POST "http://127.0.0.1:${PIGEON_AGENT_PORT}/confirm" \
                     -H "Content-Type: application/json" \
@@ -95,7 +134,10 @@ if [[ -n "$PIGEON_AGENT_PORT" ]]; then
             else
                 print -r -- "$line"
             fi
+            # Waiting again: next tokens may be a model round away.
+            _pigeon_spinner_start
         done
+        _pigeon_stream_cleanup
         return 0
     }
 fi
