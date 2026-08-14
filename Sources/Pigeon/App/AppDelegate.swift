@@ -16,6 +16,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         true
     }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // The kernel knows whether any surface still runs a process
+        // (confirm-close-surface config folded in). Window-close paths
+        // confirm on their own and release their surfaces first, so this
+        // only fires for cmd+Q / menu quit with live processes.
+        guard Ghostty.App.shared.needsConfirmQuit else { return .terminateNow }
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Quit Pigeon?"
+        alert.informativeText =
+            "A terminal still has a running process. Quitting will kill it."
+        alert.addButton(withTitle: "Quit")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
+            ? .terminateNow : .terminateCancel
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         Ghostty.App.shared.shutdown()
     }

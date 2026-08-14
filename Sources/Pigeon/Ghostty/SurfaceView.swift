@@ -16,6 +16,15 @@ extension Ghostty {
         /// Working directory reported by shell integration (OSC 7).
         @Published var pwd: String?
 
+        /// Terminal cell size in points (CELL_SIZE action). The window
+        /// uses it as resize increments so resizing snaps to the grid.
+        @Published var cellSize: NSSize = .zero
+
+        /// Preferred initial content size in points (INITIAL_SIZE action,
+        /// derived from window-width/height in cells). Applied once when
+        /// the window for a fresh surface appears.
+        @Published var initialSize: NSSize?
+
         private(set) var surface: ghostty_surface_t?
 
         /// Accumulates text produced by interpretKeyEvents during keyDown
@@ -98,6 +107,24 @@ extension Ghostty {
 
         deinit {
             if let surface { ghostty_surface_free(surface) }
+        }
+
+        /// Tear down the kernel surface (killing the shell) right now.
+        /// Closing a tab must not wait for this view to deallocate —
+        /// SwiftUI keeps it alive until the next render pass, and the
+        /// close-last-tab → quit path checks the kernel synchronously.
+        func shutdownSurface() {
+            guard let surface else { return }
+            ghostty_surface_free(surface)
+            self.surface = nil
+        }
+
+        /// Whether closing this surface should ask the user first. The
+        /// kernel folds in the confirm-close-surface config and whether a
+        /// foreground process (beyond the shell) is still running.
+        var needsConfirmQuit: Bool {
+            guard let surface else { return false }
+            return ghostty_surface_needs_confirm_quit(surface)
         }
 
         // MARK: Programmatic access (driver / tests)
@@ -376,9 +403,15 @@ extension Ghostty {
             // Run the event through the input method stack first. Plain
             // keys produce text via insertText, IME sequences produce
             // marked text and eventually commit through insertText too.
+            let markedTextBefore = markedText.length > 0
             keyTextAccumulator = []
             defer { keyTextAccumulator = nil }
             interpretKeyEvents([event])
+
+            // Push the compose state so the terminal renders the preedit
+            // text at the cursor. Only clear an existing preedit; a fresh
+            // clear would stomp state we never set.
+            syncPreedit(clearIfNeeded: markedTextBefore)
 
             let action = event.isARepeat ? GHOSTTY_ACTION_REPEAT : GHOSTTY_ACTION_PRESS
             var key = event.ghosttyKeyEvent(action)
@@ -392,8 +425,10 @@ extension Ghostty {
                 }
             } else {
                 // No committed text: either a non-text key or the IME is
-                // holding the key as part of a compose sequence.
-                key.composing = markedText.length > 0
+                // holding the key as part of a compose sequence. Also treat
+                // the key that just cancelled a compose (had marked text
+                // before, none now) as composing so it isn't encoded.
+                key.composing = markedText.length > 0 || markedTextBefore
                 _ = ghostty_surface_key(surface, key)
             }
         }
@@ -483,10 +518,32 @@ extension Ghostty.SurfaceView: NSTextInputClient {
         default:
             break
         }
+
+        // Outside a keyDown (e.g. keyboard layout change mid-compose) the
+        // preedit must be pushed immediately; inside keyDown the caller
+        // syncs after interpretKeyEvents returns.
+        if keyTextAccumulator == nil {
+            syncPreedit()
+        }
     }
 
     func unmarkText() {
+        guard markedText.length > 0 else { return }
         markedText.mutableString.setString("")
+        syncPreedit()
+    }
+
+    /// Mirror the marked-text state into libghostty so the renderer draws
+    /// the composing text at the cursor.
+    private func syncPreedit(clearIfNeeded: Bool = true) {
+        guard let surface else { return }
+        if markedText.length > 0 {
+            markedText.string.withCString { ptr in
+                ghostty_surface_preedit(surface, ptr, UInt(strlen(ptr)))
+            }
+        } else if clearIfNeeded {
+            ghostty_surface_preedit(surface, nil, 0)
+        }
     }
 
     func hasMarkedText() -> Bool {

@@ -92,6 +92,7 @@ struct TerminalWorkspace: View {
         }
         .background(ghostty.backgroundColor.opacity(ghostty.backgroundOpacity))
         .background(WindowTransparencyConfigurator(opacity: ghostty.backgroundOpacity))
+        .background(WindowBridge(tabManager: tabManager))
         .ignoresSafeArea()
         .frame(minWidth: 400, minHeight: 300)
     }

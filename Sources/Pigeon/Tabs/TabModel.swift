@@ -111,10 +111,35 @@ final class TabManager: ObservableObject {
         return tab
     }
 
-    func close(_ tab: TerminalTab) {
+    /// Close a tab, asking first when its process is still running (the
+    /// kernel decides via confirm-close-surface + process state). Pass
+    /// `confirmIfNeeded: false` for closes that must not prompt: the
+    /// process already exited, or driver-initiated test closes.
+    func close(_ tab: TerminalTab, confirmIfNeeded: Bool = true) {
+        guard tabs.contains(where: { $0.id == tab.id }) else { return }
+        guard confirmIfNeeded, tab.surfaceView.needsConfirmQuit else {
+            forceClose(tab)
+            return
+        }
+        CloseConfirmation.present(
+            on: tab.surfaceView.window,
+            message: "Close \"\(tab.displayTitle)\"?",
+            detail: "The terminal still has a running process. "
+                + "Closing the tab will kill it.",
+            confirmTitle: "Close Tab"
+        ) { [weak self, weak tab] in
+            guard let self, let tab else { return }
+            self.forceClose(tab)
+        }
+    }
+
+    private func forceClose(_ tab: TerminalTab) {
         guard let index = tabs.firstIndex(where: { $0.id == tab.id }) else { return }
         let window = tab.surfaceView.window
         tabs.remove(at: index)
+        // Free the kernel surface now; the view itself lingers until
+        // SwiftUI re-renders, and close-then-quit checks the kernel first.
+        tab.surfaceView.shutdownSurface()
 
         if tabs.isEmpty {
             window?.close()
@@ -123,6 +148,19 @@ final class TabManager: ObservableObject {
         if selectedTabID == tab.id {
             selectedTabID = tabs[min(index, tabs.count - 1)].id
         }
+    }
+
+    /// Whether closing the whole window should ask the user first.
+    var needsConfirmClose: Bool {
+        tabs.contains { $0.surfaceView.needsConfirmQuit }
+    }
+
+    /// Drop every tab at once, releasing the surfaces (and shells) without
+    /// the close-last-tab window dance. Used when the window goes away.
+    func terminateAllTabs() {
+        for tab in tabs { tab.surfaceView.shutdownSurface() }
+        tabs.removeAll()
+        selectedTabID = nil
     }
 
     // MARK: Groups
@@ -220,7 +258,10 @@ final class TabManager: ObservableObject {
         guard let view = notification.object as? Ghostty.SurfaceView,
               let tab = tab(owning: view)
         else { return }
-        close(tab)
+        // Process-exit closes come flagged confirm=false; user closes
+        // (cmd+W) come flagged true and prompt when a process is running.
+        let confirm = notification.userInfo?["confirm"] as? Bool ?? true
+        close(tab, confirmIfNeeded: confirm)
     }
 
     @objc private func handleGotoTab(_ notification: Notification) {

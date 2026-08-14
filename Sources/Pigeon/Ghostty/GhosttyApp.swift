@@ -128,6 +128,13 @@ extension Ghostty {
             return value
         }
 
+        /// Whether quitting the app should ask the user first (any surface
+        /// still has a running process, per confirm-close-surface).
+        var needsConfirmQuit: Bool {
+            guard let app else { return false }
+            return ghostty_app_needs_confirm_quit(app)
+        }
+
         /// Process pending libghostty work. Scheduled from the wakeup
         /// callback; must run on the main thread.
         func tick() {
@@ -275,9 +282,32 @@ extension Ghostty {
                 DispatchQueue.main.async { view.setMouseShape(shape) }
                 return true
 
-            case GHOSTTY_ACTION_INITIAL_SIZE, GHOSTTY_ACTION_CELL_SIZE, GHOSTTY_ACTION_SIZE_LIMIT:
-                // Window sizing hints; safe to ignore for now, SwiftUI
-                // manages the window frame.
+            case GHOSTTY_ACTION_INITIAL_SIZE:
+                // Preferred content size in points, from window-width/height
+                // (cells). WindowBridge applies it when the window appears.
+                guard target.tag == GHOSTTY_TARGET_SURFACE,
+                      let view = surfaceView(of: target.target.surface)
+                else { return false }
+                let v = action.action.initial_size
+                let size = NSSize(width: Double(v.width), height: Double(v.height))
+                DispatchQueue.main.async { view.initialSize = size }
+                return true
+
+            case GHOSTTY_ACTION_CELL_SIZE:
+                guard target.tag == GHOSTTY_TARGET_SURFACE,
+                      let view = surfaceView(of: target.target.surface)
+                else { return false }
+                let v = action.action.cell_size
+                // Arrives in physical pixels; resize increments are points.
+                let backing = NSSize(width: Double(v.width), height: Double(v.height))
+                DispatchQueue.main.async { [weak view] in
+                    guard let view else { return }
+                    view.cellSize = view.convertFromBacking(backing)
+                }
+                return true
+
+            case GHOSTTY_ACTION_SIZE_LIMIT:
+                // Minimum size hints; SwiftUI's frame minimums cover us.
                 return true
 
             case GHOSTTY_ACTION_NEW_TAB:
@@ -294,7 +324,11 @@ extension Ghostty {
                       let view = surfaceView(of: target.target.surface)
                 else { return false }
                 DispatchQueue.main.async {
-                    NotificationCenter.default.post(name: .pigeonCloseTab, object: view)
+                    // User-initiated (cmd+W): confirm if a process is running.
+                    NotificationCenter.default.post(
+                        name: .pigeonCloseTab,
+                        object: view,
+                        userInfo: ["confirm": true])
                 }
                 return true
 
@@ -340,20 +374,33 @@ extension Ghostty {
             }
         }
 
+        /// Reads that need user approval: OSC 52 reads and pastes with
+        /// control characters. The kernel already applied the config; we
+        /// ask and complete the request with the text or an empty string.
         private static func confirmReadClipboard(
             _ userdata: UnsafeMutableRawPointer?,
             string: UnsafePointer<CChar>?,
             state: UnsafeMutableRawPointer?,
             request: ghostty_clipboard_request_e
         ) {
-            // TODO: show a confirmation dialog like Ghostty does for
-            // OSC 52 reads and pastes with control characters. For now we
-            // allow the request.
-            guard let view = surfaceView(userdata),
-                  let surface = view.surface,
-                  let string
-            else { return }
-            ghostty_surface_complete_clipboard_request(surface, string, state, true)
+            guard let view = surfaceView(userdata), let string else { return }
+            let contents = String(cString: string)
+            DispatchQueue.main.async { [weak view] in
+                ClipboardConfirmation.present(
+                    on: view?.window,
+                    contents: contents,
+                    request: request
+                ) { [weak view] confirmed in
+                    // The surface may have died while the dialog was up;
+                    // completing against a freed surface would crash.
+                    guard let surface = view?.surface else { return }
+                    let value = confirmed ? contents : ""
+                    value.withCString { cString in
+                        ghostty_surface_complete_clipboard_request(
+                            surface, cString, state, true)
+                    }
+                }
+            }
         }
 
         private static func writeClipboard(
@@ -364,10 +411,27 @@ extension Ghostty {
         ) {
             guard location == GHOSTTY_CLIPBOARD_STANDARD, let string else { return }
             let value = String(cString: string)
+            let view = surfaceView(userdata)
             DispatchQueue.main.async {
-                let pasteboard = NSPasteboard.general
-                pasteboard.clearContents()
-                pasteboard.setString(value, forType: .string)
+                let write = {
+                    let pasteboard = NSPasteboard.general
+                    pasteboard.clearContents()
+                    pasteboard.setString(value, forType: .string)
+                }
+                guard confirm else {
+                    write()
+                    return
+                }
+                // OSC 52 write with clipboard-write = ask. Unlike reads
+                // there is no request to complete; a denial simply leaves
+                // the clipboard untouched.
+                ClipboardConfirmation.present(
+                    on: view?.window,
+                    contents: value,
+                    request: GHOSTTY_CLIPBOARD_REQUEST_OSC_52_WRITE
+                ) { confirmed in
+                    if confirmed { write() }
+                }
             }
         }
 
@@ -376,9 +440,13 @@ extension Ghostty {
             processAlive: Bool
         ) {
             guard let view = surfaceView(userdata) else { return }
-            // TODO: confirm before closing when processAlive is true.
+            // The kernel asks us to close (normally: the process exited).
+            // Only a still-alive process warrants a confirmation.
             DispatchQueue.main.async {
-                NotificationCenter.default.post(name: .pigeonCloseTab, object: view)
+                NotificationCenter.default.post(
+                    name: .pigeonCloseTab,
+                    object: view,
+                    userInfo: ["confirm": processAlive])
             }
         }
     }

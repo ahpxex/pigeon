@@ -195,6 +195,7 @@ final class DriverServer {
                     "h": f.height,
                 ]
             }
+            let increments = window?.contentResizeIncrements ?? NSSize(width: 0, height: 0)
             return HTTPResponse(json: [
                 "tabs": manager.tabs.map { tab in
                     [
@@ -216,6 +217,10 @@ final class DriverServer {
                 },
                 "windowNumber": window?.windowNumber ?? -1,
                 "frame": frame,
+                "resizeIncrements": [
+                    "w": Double(increments.width),
+                    "h": Double(increments.height),
+                ],
             ])
 
         case ("POST", "/tabs/new"):
@@ -235,7 +240,8 @@ final class DriverServer {
             guard let tab = tab(in: manager, from: request) else {
                 return HTTPResponse(status: 404, error: "tab not found")
             }
-            manager.close(tab)
+            // Driver closes never prompt — tests need determinism.
+            manager.close(tab, confirmIfNeeded: false)
             return HTTPResponse(json: ["ok": true])
 
         case ("POST", "/tabs/move"):
@@ -541,17 +547,31 @@ final class DriverServer {
         case "left": view.sendKey(keyCode: 123, text: nil)
         case "right": view.sendKey(keyCode: 124, text: nil)
         default:
-            // "ctrl-x" for any letter: encode as the corresponding C0 byte.
-            guard name.hasPrefix("ctrl-"), name.count == 6,
-                  let letter = name.last?.asciiValue,
-                  letter >= UInt8(ascii: "a"), letter <= UInt8(ascii: "z")
-            else { return false }
-            let c0 = String(UnicodeScalar(letter - UInt8(ascii: "a") + 1))
-            view.sendKey(
-                keyCode: 0,
-                text: c0,
-                unshiftedCodepoint: UInt32(letter),
-                mods: GHOSTTY_MODS_CTRL)
+            if name.hasPrefix("ctrl-"), name.count == 6,
+               let letter = name.last?.asciiValue,
+               letter >= UInt8(ascii: "a"), letter <= UInt8(ascii: "z") {
+                // Encode as the corresponding C0 byte.
+                let c0 = String(UnicodeScalar(letter - UInt8(ascii: "a") + 1))
+                view.sendKey(
+                    keyCode: 0,
+                    text: c0,
+                    unshiftedCodepoint: UInt32(letter),
+                    mods: GHOSTTY_MODS_CTRL)
+                return true
+            }
+            if name.hasPrefix("cmd-"), name.count == 5,
+               let letter = name.last?.asciiValue,
+               letter >= UInt8(ascii: "a"), letter <= UInt8(ascii: "z") {
+                // Runs the ghostty keybinding path (cmd+w close tab, ...),
+                // same as performKeyEquivalent would for real input.
+                view.sendKey(
+                    keyCode: 0,
+                    text: nil,
+                    unshiftedCodepoint: UInt32(letter),
+                    mods: GHOSTTY_MODS_SUPER)
+                return true
+            }
+            return false
         }
         return true
     }
