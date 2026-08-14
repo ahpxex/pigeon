@@ -120,10 +120,11 @@ open build/Build/Products/Debug/Pigeon.app   # 或从 Xcode 跑
 
 ```sh
 scripts/pigeonctl launch          # 启动（走 LaunchServices + launchctl setenv 传端口）
-scripts/pigeonctl state           # tab 列表 + windowNumber（JSON）
-scripts/pigeonctl new-tab / select <id> / close <id>
+scripts/pigeonctl state           # 全部窗口的 tab 列表 + windows 数组 + resizeIncrements（JSON）
+scripts/pigeonctl new-window / select-window <windowNumber>   # 多窗口
+scripts/pigeonctl new-tab / select <id> / close <id>          # tab id 跨窗口寻址
 scripts/pigeonctl run 'echo hi'   # 输入命令并回车
-scripts/pigeonctl key enter|escape|tab|up|down|ctrl-c|...
+scripts/pigeonctl key enter|escape|tab|up|down|ctrl-c|cmd-w|...  # cmd-x 走 ghostty 键位路径
 scripts/pigeonctl text            # 读回整屏文本 —— 断言用这个
 scripts/pigeonctl sidebar [show|hide|<width>]  # 侧边栏状态/折叠/宽度
 scripts/pigeonctl move <id> <index> / rename <id> <名字>  # 排序、重命名（空名字恢复 shell 标题）
@@ -141,21 +142,28 @@ scripts/pigeonctl quit
 - 新建 tab 后要等 shell 出 prompt 再 `run`（约 0.5-1s），否则输入会混进启动 banner。
 - 所有驱动请求在主线程处理，直接调 TabManager / SurfaceView，与真实交互同路径（但绕过了 AppKit 事件层 —— 键盘快捷键类问题驱动测不到，要单独想办法）。
 - ⚠️ 驱动的 `/input/key` 发 ctrl-u/ctrl-c 之类组合键时，键码可能以 CSI-u 片段形式漏进 zle 缓冲区（表现为行里出现 `;5u` 字样、行没被清掉）。测试要清行时别依赖 ctrl 键，改用 enter 把行跑掉或开新 tab。
+- 确认对话框（关 tab/关窗/退出/剪贴板）driver 点不到：用 `osascript -e 'tell application "System Events" to tell process "Pigeon" to click button "..." of first sheet of window 1'`（本机已授权辅助功能）。driver 的 `/tabs/close` 永不弹确认（测试确定性）；`pigeonctl quit` 是 pkill，也不走确认。
 
 ## 当前状态与路线图
 
 已实现：垂直 Tab 侧边栏（多 tab、切换保活、关闭、拖拽排序（组内）、右键重命名（customTitle 覆盖 shell 标题）、cmd+T/W、cmd+1-9 走 ghostty 键位；拖拽调宽 160-420、拖到 <120 或 ⌥⌘S 折叠，状态持久化在 UserDefaults，`WorkspaceState`）、窗口配色与终端主题统一（hiddenTitleBar 全铺背景色）、分组（TabGroup：折叠/改名/删除，右键 Move to Group，侧边栏空白处单击新建组并行内命名（空名=取消），拖拽 tab 到组头或组区域直接入组（高亮提示），组内拖拽排序，空组保留到手动删除）、OpenMoji tab 图标（56 个精选 128px PNG 分五类打进 bundle，新 tab 随机分配且避开在用图标，右键 Change Icon 弹分类网格选择器；OpenMoji CC BY-SA 4.0 需保留署名）、驱动服务与 pigeonctl、键盘（含基本 IME preedit）、鼠标、剪贴板、标题（默认显示 OSC 7 上报的目录名，custom rename 优先）、按住 ⌘ 显示 tab 跳转序号（cmd+1-9 按侧边栏视觉顺序）、光标形状、bell、URL 打开、Ghostty 配置加载。
 
+已实现的防护与窗口行为（2026-08 补齐）：
+- **关闭确认三层齐**：tab 关闭（cmd+W/侧边栏 X）问 `ghostty_surface_needs_confirm_quit`（内核折算 confirm-close-surface 配置 + shell integration 的前台进程状态，闲置 prompt 不弹）；窗口关闭（红点）由 `WindowBridge` 的 NSWindowDelegate 转发代理拦 `windowShouldClose`；cmd+Q 走 `applicationShouldTerminate` + `ghostty_app_needs_confirm_quit`。进程退出触发的 close_surface 不弹。⚠️ 两个坑别再踩：(1) 关 tab 必须立刻 `shutdownSurface()`（主动 free 内核 surface）——SwiftUI 要到下一帧才释放 NSView，而关最后一个 tab → 关窗 → 退出确认是同步链，晚释放会让退出误弹"还有进程"；(2) 确认回调里的 `window.close()` 不会再走 `windowShouldClose`，tabs 要在回调里显式 `terminateAllTabs()` 释放，否则退出时二次确认。
+- **剪贴板确认**（`Ghostty/ClipboardConfirmation.swift`，NSAlert + 内容预览）：OSC 52 读/粘贴保护走 `confirm_read_clipboard_cb`（拒绝=完成请求但给空串）；OSC 52 写走 `write_clipboard_cb` 的 `confirm` 参数（拒绝=不动剪贴板，无需完成请求）。内核按 clipboard-read/write 配置决定是否要确认，app 只管弹窗。
+- **IME preedit 渲染**：`ghostty_surface_preedit` 同步 marked text（照抄 vendor 的 syncPreedit 时序：keyDown 里 interpretKeyEvents 后 sync、composing 判定含 markedTextBefore）。
+- **窗口尺寸**：INITIAL_SIZE（config window-width/height，单位 cells）在窗口首次出现时应用（chrome 从实际布局测量）；CELL_SIZE → `contentResizeIncrements`，拖拽缩放按字符格吸附。都在 `WindowBridge`。
+
 已知简化（做功能时优先补这些）：
-- 剪贴板读取确认（OSC 52）目前直接放行，没有像 Ghostty 那样弹确认框
-- close_surface 没有"进程还活着"的确认对话框；tab 关闭即杀 shell
-- IME 候选框定位实现了，但 preedit 文本没有渲染到终端里（composing 状态只是不发 key）
-- `GHOSTTY_ACTION_INITIAL_SIZE` / `CELL_SIZE` 被忽略，窗口不会按行列数吸附
-- 无 split、无多窗口管理、无设置界面；配置热重载未接（改 ghostty config 要重启）
+- 无 split
+- 关窗确认只显示一句话，不列出具体在跑的进程名（Ghostty 会列）
+- WindowGroup 场景恢复会还原上次的窗口数量，但每个窗口都是全新 shell（不恢复 cwd/tab 布局）
 
 已有设置界面（⌘, 打开，SwiftUI Settings scene 分四个 Tab）：General（标签风格、图标分类，`AppSettings`）、Appearance（系统/亮/暗、主题色）、Terminal（内核 GUI 设置：字体=系统等宽字体枚举 Picker、字号滑杆、9 个内置主题卡片（One Dark/GitHub/Solarized/Dracula/Nord/Tokyo Night/Monokai，写完整 16 色 palette）、光标、不透明度；`KernelSettings` 写进配置文件末尾的 pigeon-settings 托管块并热重载，块外内容留给手改且被托管块覆盖）、Agent（AI Provider 管理：顶部 Picker 选 Provider（选中即默认），下方只显示选中者的配置——内置 Anthropic/OpenAI/DeepSeek + 自定义 Provider（URL+模型+key），模型列表不硬编码——key 填好后自动从 /models 端点拉取（改 key/URL 防抖重拉，手动刷新保留），拉到的列表持久化当缓存，API key 每个 Provider 单独存 `~/.config/pigeon/credentials.json`，`AgentSettings`）、Advanced（配置文件路径/打开/重载）。程序化打开设置窗口必须走 SwiftUI openSettings 环境动作（`SettingsOpener` 桥接 + `.pigeonOpenSettings` 通知）—— showSettingsWindow: 等老 selector 在 macOS 26 上已失效；cmd+, 在 performKeyEquivalent 里明确不给 ghostty（它默认绑成 open_config）。
 
-路线图（用户随时会调整）：Agent 打磨 → splits → 多窗口。
+**多窗口**（已实现）：`WindowGroup(id:"main")`，每窗口一个 `TabManager` 实例（`TerminalWorkspace` 的 @StateObject），静态弱引用 registry（`TabManager.all` / `forKeyWindow` / `manager(owning:)`）。ghostty action 通知广播给所有 manager，各自按"surface 归属"过滤（menu 的 nil-object 请求由 key window 的 manager 接）；`forKeyWindow` 在 app 未激活时（driver 的 curl 请求）回退 `NSApp.orderedWindows` 前后顺序。新窗口：⌘N 菜单直接 openWindow；ghostty NEW_WINDOW action → `.pigeonNewWindow` 通知（带 UUID）→ 每窗口一个 NewWindowBridge，静态 claim 集合保证只开一个。`WindowBridge` 的 attach 必须走 NSView 子类的 `viewDidMoveToWindow`（makeNSView 里 async 抓 window 对新开窗口不可靠，会漏装 delegate）。侧边栏状态 `WorkspaceState` 每窗口一份，持久化键共享（后写胜出）。
+
+路线图（用户随时会调整）：Agent 打磨 → splits。
 
 ## 约定
 

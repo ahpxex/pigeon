@@ -173,7 +173,7 @@ final class AgentServer {
     @MainActor
     private func screenContext(surfaceID: String?) -> String? {
         guard let surfaceID,
-              let tab = TabManager.shared.tabs.first(where: {
+              let tab = TabManager.all.flatMap(\.tabs).first(where: {
                   $0.surfaceView.agentSurfaceID == surfaceID
               })
         else { return nil }

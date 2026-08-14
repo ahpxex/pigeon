@@ -42,6 +42,8 @@ case "$1" in
     exit 1
     ;;
   state)      curl -sf "$BASE/state" ;;
+  new-window) curl -sf -X POST "$BASE/windows/new" ;;
+  select-window) curl -sf -X POST --data "{\"windowNumber\":$2}" "$BASE/windows/select" ;;
   new-tab)    curl -sf -X POST "$BASE/tabs/new" ;;
   select)     curl -sf -X POST --data "{\"id\":\"$2\"}" "$BASE/tabs/select" ;;
   close)      curl -sf -X POST --data "{\"id\":\"$2\"}" "$BASE/tabs/close" ;;

@@ -10,6 +10,7 @@ struct TabRow: View {
     let shortcutNumber: Int?
 
     @EnvironmentObject private var ghostty: Ghostty.App
+    @EnvironmentObject private var tabManager: TabManager
     @ObservedObject private var tabState: TerminalTab
     @ObservedObject private var settings = AppSettings.shared
     @State private var hovering = false
@@ -77,7 +78,7 @@ struct TabRow: View {
                     .opacity(0.55)
             } else if hovering && !isOnlyTab && !renaming {
                 Button {
-                    TabManager.shared.close(tab)
+                    tabManager.close(tab)
                 } label: {
                     Image(systemName: "xmark")
                         .font(.system(size: 9, weight: .bold))
@@ -97,7 +98,7 @@ struct TabRow: View {
         // Single tap only: a double-tap gesture here would force SwiftUI
         // to hold every click for the double-click interval, making tab
         // switching feel laggy. Rename lives in the context menu.
-        .onTapGesture { TabManager.shared.select(tab) }
+        .onTapGesture { tabManager.select(tab) }
         .onHover { hovering = $0 }
         .contextMenu {
             Button("Rename") { startRename() }
@@ -109,26 +110,26 @@ struct TabRow: View {
             Button("Change Icon…") { showingIconPicker = true }
             Divider()
             Menu("Move to Group") {
-                ForEach(TabManager.shared.groups) { group in
+                ForEach(tabManager.groups) { group in
                     Button(group.name) {
-                        TabManager.shared.assign(tab, to: group)
+                        tabManager.assign(tab, to: group)
                     }
                     .disabled(group.id == tabState.groupID)
                 }
-                if !TabManager.shared.groups.isEmpty { Divider() }
+                if !tabManager.groups.isEmpty { Divider() }
                 Button("New Group") {
-                    let group = TabManager.shared.createGroup()
-                    TabManager.shared.assign(tab, to: group)
+                    let group = tabManager.createGroup()
+                    tabManager.assign(tab, to: group)
                 }
                 if tabState.groupID != nil {
                     Divider()
                     Button("Remove from Group") {
-                        TabManager.shared.assign(tab, to: nil)
+                        tabManager.assign(tab, to: nil)
                     }
                 }
             }
             Divider()
-            Button("Close Tab") { TabManager.shared.close(tab) }
+            Button("Close Tab") { tabManager.close(tab) }
                 .disabled(isOnlyTab)
         }
         .popover(isPresented: $showingIconPicker, arrowEdge: .trailing) {

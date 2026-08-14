@@ -1,11 +1,10 @@
 import Foundation
 import Combine
 
-/// UI state for the main window that persists across launches.
+/// Sidebar state for one terminal window. Persisted app-wide (last
+/// write wins), so new windows inherit the most recent layout.
 @MainActor
 final class WorkspaceState: ObservableObject {
-    static let shared = WorkspaceState()
-
     static let minSidebarWidth: Double = 160
     static let maxSidebarWidth: Double = 420
     /// Dragging narrower than this collapses the sidebar.
@@ -21,7 +20,7 @@ final class WorkspaceState: ObservableObject {
 
     private let defaults = UserDefaults.standard
 
-    private init() {
+    init() {
         sidebarCollapsed = defaults.bool(forKey: "sidebarCollapsed")
         let width = defaults.double(forKey: "sidebarWidth")
         sidebarWidth = width == 0 ? 220 : Self.clampWidth(width)

@@ -60,6 +60,9 @@ struct WindowBridge: NSViewRepresentable {
                 self.window = window
                 appliedInitialSize = false
             }
+            // The manager needs its window for key-window resolution
+            // (menu items and the driver act on the frontmost manager).
+            tabManager.window = window
 
             // SwiftUI owns the window delegate; interpose a forwarding
             // proxy so we get windowShouldClose without losing the rest.

@@ -55,10 +55,47 @@ final class TabGroup: Identifiable, ObservableObject {
     }
 }
 
-/// Ordered tab list plus selection for the main window.
+/// Ordered tab list plus selection for one terminal window. Every window
+/// owns an instance; ghostty actions arrive via NotificationCenter and
+/// each manager only handles the ones about surfaces it owns.
 @MainActor
 final class TabManager: ObservableObject {
-    static let shared = TabManager()
+    /// All live managers, in window-creation order. Weakly held — a
+    /// manager dies with its window's scene state.
+    private struct WeakBox { weak var value: TabManager? }
+    private static var registry: [WeakBox] = []
+
+    static var all: [TabManager] {
+        registry.compactMap(\.value)
+    }
+
+    /// The manager of the frontmost terminal window; app-scoped requests
+    /// (menu items, the driver) act on it. keyWindow is nil while the app
+    /// is inactive (e.g. driver requests from a background curl), so fall
+    /// back to front-to-back window order, which survives deactivation.
+    static var forKeyWindow: TabManager? {
+        let managers = all
+        if let key = NSApp.keyWindow ?? NSApp.mainWindow,
+           let manager = managers.first(where: { $0.window === key }) {
+            return manager
+        }
+        for window in NSApp.orderedWindows {
+            if let manager = managers.first(where: { $0.window === window }) {
+                return manager
+            }
+        }
+        return managers.first
+    }
+
+    static func manager(owning view: Ghostty.SurfaceView) -> TabManager? {
+        all.first { $0.tab(owning: view) != nil }
+    }
+
+    /// The hosting window; wired up by WindowBridge once it exists.
+    weak var window: NSWindow?
+
+    /// Per-window sidebar state (width/collapse), persisted app-wide.
+    let workspace = WorkspaceState()
 
     @Published private(set) var tabs: [TerminalTab] = []
     @Published private(set) var groups: [TabGroup] = []
@@ -76,7 +113,10 @@ final class TabManager: ObservableObject {
         tabs.filter { $0.groupID == group.id }
     }
 
-    private init() {
+    init() {
+        Self.registry.removeAll { $0.value == nil }
+        Self.registry.append(WeakBox(value: self))
+
         let center = NotificationCenter.default
         center.addObserver(
             self, selector: #selector(handleNewTab), name: .pigeonNewTab, object: nil)
@@ -156,11 +196,14 @@ final class TabManager: ObservableObject {
     }
 
     /// Drop every tab at once, releasing the surfaces (and shells) without
-    /// the close-last-tab window dance. Used when the window goes away.
+    /// the close-last-tab window dance. Called when the window goes away —
+    /// SwiftUI may keep the scene state alive afterwards, so also retire
+    /// this manager from the registry.
     func terminateAllTabs() {
         for tab in tabs { tab.surfaceView.shutdownSurface() }
         tabs.removeAll()
         selectedTabID = nil
+        Self.registry.removeAll { $0.value === self || $0.value == nil }
     }
 
     // MARK: Groups
@@ -251,6 +294,13 @@ final class TabManager: ObservableObject {
     }
 
     @objc private func handleNewTab(_ notification: Notification) {
+        // Surface-originated (cmd+T in a terminal): only its own window's
+        // manager reacts. Menu fallback (nil object): the key window's.
+        if let view = notification.object as? Ghostty.SurfaceView {
+            guard tab(owning: view) != nil else { return }
+        } else {
+            guard Self.forKeyWindow === self else { return }
+        }
         newTab()
     }
 
@@ -265,6 +315,9 @@ final class TabManager: ObservableObject {
     }
 
     @objc private func handleGotoTab(_ notification: Notification) {
+        guard let view = notification.object as? Ghostty.SurfaceView,
+              tab(owning: view) != nil
+        else { return }
         let ordered = visualOrderedTabs
         guard let raw = notification.userInfo?["goto"] as? Int32,
               !ordered.isEmpty,

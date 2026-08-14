@@ -7,6 +7,7 @@ struct GroupHeaderRow: View {
     @Binding var editingGroupID: TabGroup.ID?
 
     @EnvironmentObject private var ghostty: Ghostty.App
+    @EnvironmentObject private var tabManager: TabManager
     @State private var hovering = false
     @State private var renaming = false
     @State private var draftName = ""
@@ -49,13 +50,13 @@ struct GroupHeaderRow: View {
         .onTapGesture {
             guard !renaming else { return }
             withAnimation(.easeOut(duration: 0.15)) {
-                TabManager.shared.toggleExpanded(group)
+                tabManager.toggleExpanded(group)
             }
         }
         .onHover { hovering = $0 }
         .contextMenu {
             Button("Rename Group") { startRename() }
-            Button("Delete Group") { TabManager.shared.deleteGroup(group) }
+            Button("Delete Group") { tabManager.deleteGroup(group) }
         }
         .onAppear {
             // A group created from the blank-area menu starts life in
@@ -83,7 +84,7 @@ struct GroupHeaderRow: View {
         if !trimmed.isEmpty {
             group.name = trimmed
         } else if isProvisional {
-            TabManager.shared.deleteGroup(group)
+            tabManager.deleteGroup(group)
         }
         editingGroupID = nil
     }
@@ -91,7 +92,7 @@ struct GroupHeaderRow: View {
     private func cancelRename() {
         renaming = false
         if isProvisional {
-            TabManager.shared.deleteGroup(group)
+            tabManager.deleteGroup(group)
         }
         editingGroupID = nil
     }

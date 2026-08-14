@@ -4,7 +4,8 @@ import SwiftUI
 /// Also owns the gesture-driven reorder / move-to-group logic.
 struct TabSidebar: View {
     @EnvironmentObject private var ghostty: Ghostty.App
-    @ObservedObject private var tabManager = TabManager.shared
+    @EnvironmentObject private var tabManager: TabManager
+    @EnvironmentObject private var workspace: WorkspaceState
 
     /// Gesture-driven reordering state. We deliberately avoid the system
     /// drag-and-drop machinery (onDrag/onDrop): it snapshots the row into
@@ -114,7 +115,7 @@ struct TabSidebar: View {
 
                 Button {
                     withAnimation(.easeOut(duration: 0.15)) {
-                        WorkspaceState.shared.toggleSidebar()
+                        workspace.toggleSidebar()
                     }
                 } label: {
                     Image(systemName: "sidebar.left")
@@ -324,7 +325,7 @@ private struct SidebarRowFramesKey: PreferenceKey {
 
 /// Invisible drag strip on the sidebar's trailing edge.
 struct SidebarResizeHandle: View {
-    @ObservedObject private var workspace = WorkspaceState.shared
+    @EnvironmentObject private var workspace: WorkspaceState
     @State private var dragStartWidth: Double? = nil
 
     var body: some View {

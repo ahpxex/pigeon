@@ -10,6 +10,7 @@ struct TerminalView: View {
     var body: some View {
         content
             .background(SettingsOpener())
+            .background(NewWindowBridge())
     }
 
     @ViewBuilder
@@ -36,10 +37,23 @@ struct TerminalView: View {
     }
 }
 
+/// Owns one window's tab manager (and through it the window's sidebar
+/// state). Instantiated per WindowGroup scene, so every window gets its
+/// own set of tabs.
 struct TerminalWorkspace: View {
+    @StateObject private var tabManager = TabManager()
+
+    var body: some View {
+        WorkspaceLayout(tabManager: tabManager, workspace: tabManager.workspace)
+            .environmentObject(tabManager)
+            .environmentObject(tabManager.workspace)
+    }
+}
+
+private struct WorkspaceLayout: View {
     @EnvironmentObject private var ghostty: Ghostty.App
-    @ObservedObject private var tabManager = TabManager.shared
-    @ObservedObject private var workspace = WorkspaceState.shared
+    @ObservedObject var tabManager: TabManager
+    @ObservedObject var workspace: WorkspaceState
 
     var body: some View {
         HStack(spacing: 0) {
@@ -121,6 +135,26 @@ private struct WindowTransparencyConfigurator: NSViewRepresentable {
             window.backgroundColor = translucent ? .clear : nil
             window.invalidateShadow()
         }
+    }
+}
+
+/// Invisible bridge that exposes SwiftUI's openWindow action to AppKit
+/// land (ghostty's new_window action, the driver). Every window hosts
+/// one; the shared claim set makes exactly one act per request.
+private struct NewWindowBridge: View {
+    @Environment(\.openWindow) private var openWindow
+    @MainActor private static var claimed = Set<UUID>()
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .onReceive(NotificationCenter.default.publisher(for: .pigeonNewWindow)) { note in
+                guard let id = note.userInfo?["id"] as? UUID,
+                      !Self.claimed.contains(id)
+                else { return }
+                Self.claimed.insert(id)
+                openWindow(id: "main")
+            }
     }
 }
 

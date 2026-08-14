@@ -178,11 +178,17 @@ final class DriverServer {
 
     @MainActor
     private func handleOnMain(_ request: HTTPRequest) -> HTTPResponse {
-        let manager = TabManager.shared
+        // App-scoped requests act on the frontmost window's manager;
+        // tab-id-addressed requests are resolved across all windows.
+        guard let manager = TabManager.forKeyWindow else {
+            return HTTPResponse(status: 500, error: "no terminal window")
+        }
 
         switch (request.method, request.path) {
         case ("GET", "/state"):
-            let window = manager.tabs.first?.surfaceView.window
+            let managers = TabManager.all
+            let window = manager.window
+                ?? manager.tabs.first?.surfaceView.window
                 ?? NSApp.windows.first { $0.isVisible }
             var frame: [String: Double] = [:]
             if let f = window?.frame, let screen = window?.screen {
@@ -195,33 +201,61 @@ final class DriverServer {
                     "h": f.height,
                 ]
             }
-            let increments = window?.contentResizeIncrements ?? NSSize(width: 0, height: 0)
-            return HTTPResponse(json: [
-                "tabs": manager.tabs.map { tab in
-                    [
+            var tabsJSON: [[String: Any]] = []
+            for m in managers {
+                for tab in m.tabs {
+                    tabsJSON.append([
                         "id": tab.id.uuidString,
                         "title": tab.displayTitle,
                         "shellTitle": tab.surfaceView.title,
                         "pwd": tab.surfaceView.pwd as Any,
-                        "selected": tab.id == manager.selectedTabID,
+                        "selected": tab.id == m.selectedTabID,
                         "icon": tab.iconCode,
                         "groupId": tab.groupID?.uuidString as Any,
-                    ]
-                },
-                "groups": manager.groups.map { group in
-                    [
-                        "id": group.id.uuidString,
-                        "name": group.name,
-                        "expanded": group.isExpanded,
-                    ]
-                },
+                        "windowNumber": m.window?.windowNumber ?? -1,
+                    ])
+                }
+            }
+            let groupsJSON: [[String: Any]] = managers.flatMap(\.groups).map { group in
+                [
+                    "id": group.id.uuidString,
+                    "name": group.name,
+                    "expanded": group.isExpanded,
+                ]
+            }
+            let windowsJSON: [[String: Any]] = managers.map { m in
+                [
+                    "windowNumber": m.window?.windowNumber ?? -1,
+                    "tabs": m.tabs.count,
+                    "key": m === manager,
+                ]
+            }
+            let increments = window?.contentResizeIncrements ?? NSSize(width: 0, height: 0)
+            let incrementsJSON: [String: Double] = [
+                "w": Double(increments.width),
+                "h": Double(increments.height),
+            ]
+            return HTTPResponse(json: [
+                "tabs": tabsJSON,
+                "groups": groupsJSON,
+                "windows": windowsJSON,
                 "windowNumber": window?.windowNumber ?? -1,
                 "frame": frame,
-                "resizeIncrements": [
-                    "w": Double(increments.width),
-                    "h": Double(increments.height),
-                ],
+                "resizeIncrements": incrementsJSON,
             ])
+
+        case ("POST", "/windows/new"):
+            NotificationCenter.default.post(
+                name: .pigeonNewWindow, object: nil, userInfo: ["id": UUID()])
+            return HTTPResponse(json: ["ok": true])
+
+        case ("POST", "/windows/select"):
+            guard let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any],
+                  let number = json["windowNumber"] as? Int,
+                  let target = TabManager.all.first(where: { $0.window?.windowNumber == number })
+            else { return HTTPResponse(status: 404, error: "window not found") }
+            target.window?.makeKeyAndOrderFront(nil)
+            return HTTPResponse(json: ["ok": true])
 
         case ("POST", "/tabs/new"):
             guard let tab = manager.newTab() else {
@@ -230,34 +264,35 @@ final class DriverServer {
             return HTTPResponse(json: ["id": tab.id.uuidString])
 
         case ("POST", "/tabs/select"):
-            guard let tab = tab(in: manager, from: request) else {
+            guard let (owner, tab) = locateTab(from: request) else {
                 return HTTPResponse(status: 404, error: "tab not found")
             }
-            manager.select(tab)
+            owner.select(tab)
+            owner.window?.makeKeyAndOrderFront(nil)
             return HTTPResponse(json: ["ok": true])
 
         case ("POST", "/tabs/close"):
-            guard let tab = tab(in: manager, from: request) else {
+            guard let (owner, tab) = locateTab(from: request) else {
                 return HTTPResponse(status: 404, error: "tab not found")
             }
             // Driver closes never prompt — tests need determinism.
-            manager.close(tab, confirmIfNeeded: false)
+            owner.close(tab, confirmIfNeeded: false)
             return HTTPResponse(json: ["ok": true])
 
         case ("POST", "/tabs/move"):
             guard let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any],
                   let id = json["id"] as? String,
                   let index = json["index"] as? Int,
-                  let tab = manager.tabs.first(where: { $0.id.uuidString == id })
+                  let (owner, tab) = locateTab(id: id)
             else { return HTTPResponse(status: 400, error: "need {id, index}") }
-            manager.move(tabID: tab.id, toIndex: index)
+            owner.move(tabID: tab.id, toIndex: index)
             return HTTPResponse(json: ["ok": true])
 
         case ("POST", "/tabs/rename"):
             guard let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any],
                   let id = json["id"] as? String,
                   let title = json["title"] as? String,
-                  let tab = manager.tabs.first(where: { $0.id.uuidString == id })
+                  let (_, tab) = locateTab(id: id)
             else { return HTTPResponse(status: 400, error: "need {id, title}") }
             tab.customTitle = title.isEmpty ? nil : title
             return HTTPResponse(json: ["ok": true])
@@ -266,7 +301,7 @@ final class DriverServer {
             guard let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any],
                   let id = json["id"] as? String,
                   let icon = json["icon"] as? String,
-                  let tab = manager.tabs.first(where: { $0.id.uuidString == id }),
+                  let (_, tab) = locateTab(id: id),
                   TabIcon.codes.contains(icon)
             else { return HTTPResponse(status: 400, error: "need {id, icon} with a known icon code") }
             tab.iconCode = icon
@@ -325,7 +360,7 @@ final class DriverServer {
         case ("GET", "/text"):
             let target: TerminalTab?
             if let id = request.query["id"] {
-                target = manager.tabs.first { $0.id.uuidString == id }
+                target = locateTab(id: id)?.tab
             } else {
                 target = manager.selectedTab
             }
@@ -335,7 +370,7 @@ final class DriverServer {
             return HTTPResponse(text: tab.surfaceView.screenText())
 
         case ("GET", "/sidebar"):
-            let workspace = WorkspaceState.shared
+            let workspace = manager.workspace
             return HTTPResponse(json: [
                 "collapsed": workspace.sidebarCollapsed,
                 "width": workspace.sidebarWidth,
@@ -344,7 +379,7 @@ final class DriverServer {
         case ("POST", "/sidebar"):
             guard let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any]
             else { return HTTPResponse(status: 400, error: "body must be JSON") }
-            let workspace = WorkspaceState.shared
+            let workspace = manager.workspace
             if let collapsed = json["collapsed"] as? Bool {
                 workspace.sidebarCollapsed = collapsed
             }
@@ -576,11 +611,22 @@ final class DriverServer {
         return true
     }
 
+    /// Resolve a tab id to its owning manager and tab, across all windows.
     @MainActor
-    private func tab(in manager: TabManager, from request: HTTPRequest) -> TerminalTab? {
+    private func locateTab(id: String) -> (owner: TabManager, tab: TerminalTab)? {
+        for manager in TabManager.all {
+            if let tab = manager.tabs.first(where: { $0.id.uuidString == id }) {
+                return (manager, tab)
+            }
+        }
+        return nil
+    }
+
+    @MainActor
+    private func locateTab(from request: HTTPRequest) -> (owner: TabManager, tab: TerminalTab)? {
         guard let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any],
               let id = json["id"] as? String
         else { return nil }
-        return manager.tabs.first { $0.id.uuidString == id }
+        return locateTab(id: id)
     }
 }

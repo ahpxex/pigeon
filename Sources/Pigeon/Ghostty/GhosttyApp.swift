@@ -13,6 +13,9 @@ extension Notification.Name {
     /// Switch tabs. Object is the originating SurfaceView, userInfo["goto"]
     /// is a ghostty_action_goto_tab_e raw value.
     static let pigeonGotoTab = Notification.Name("pigeonGotoTab")
+    /// Request a new terminal window. userInfo["id"] carries a UUID so
+    /// the per-window bridges can claim the request exactly once.
+    static let pigeonNewWindow = Notification.Name("pigeonNewWindow")
 }
 
 extension Ghostty {
@@ -165,9 +168,11 @@ extension Ghostty {
             ghostty_app_update_config(app, newConfig)
             // The app-level update does not touch live surfaces; each one
             // must be updated explicitly (fonts, colors, etc).
-            for tab in TabManager.shared.tabs {
-                if let surface = tab.surfaceView.surface {
-                    ghostty_surface_update_config(surface, newConfig)
+            for manager in TabManager.all {
+                for tab in manager.tabs {
+                    if let surface = tab.surfaceView.surface {
+                        ghostty_surface_update_config(surface, newConfig)
+                    }
                 }
             }
             if let old = config { ghostty_config_free(old) }
@@ -308,6 +313,15 @@ extension Ghostty {
 
             case GHOSTTY_ACTION_SIZE_LIMIT:
                 // Minimum size hints; SwiftUI's frame minimums cover us.
+                return true
+
+            case GHOSTTY_ACTION_NEW_WINDOW:
+                DispatchQueue.main.async {
+                    NotificationCenter.default.post(
+                        name: .pigeonNewWindow,
+                        object: nil,
+                        userInfo: ["id": UUID()])
+                }
                 return true
 
             case GHOSTTY_ACTION_NEW_TAB:
