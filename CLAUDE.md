@@ -146,13 +146,13 @@ scripts/pigeonctl quit
 
 ## 当前状态与路线图
 
-已实现：垂直 Tab 侧边栏（多 tab、切换保活、关闭、拖拽排序（组内）、右键重命名（customTitle 覆盖 shell 标题）、cmd+T/W、cmd+1-9 走 ghostty 键位；拖拽调宽 160-420、拖到 <120 或 ⌥⌘S 折叠，状态持久化在 UserDefaults，`WorkspaceState`）、窗口配色与终端主题统一（hiddenTitleBar 全铺背景色）、分组（TabGroup：折叠/改名/删除，右键 Move to Group，侧边栏空白处单击新建组并行内命名（空名=取消），拖拽 tab 到组头或组区域直接入组（高亮提示），组内拖拽排序，空组保留到手动删除）、OpenMoji tab 图标（56 个精选 128px PNG 分五类打进 bundle，新 tab 随机分配且避开在用图标，右键 Change Icon 弹分类网格选择器；OpenMoji CC BY-SA 4.0 需保留署名）、驱动服务与 pigeonctl、键盘（含基本 IME preedit）、鼠标、剪贴板、标题（默认显示 OSC 7 上报的目录名，custom rename 优先）、按住 ⌘ 显示 tab 跳转序号（cmd+1-9 按侧边栏视觉顺序）、光标形状、bell、URL 打开、Ghostty 配置加载。
+已实现：垂直 Tab 侧边栏（多 tab、切换保活、关闭、拖拽排序（组内）、右键重命名（customTitle 覆盖 shell 标题）、cmd+T/W、cmd+1-9 走 ghostty 键位；拖拽调宽 160-420、拖到 <120 或 ⌘B 折叠，状态持久化在 UserDefaults，`WorkspaceState`）、窗口配色与终端主题统一（hiddenTitleBar 全铺背景色）、分组（TabGroup：折叠/改名/删除，右键 Move to Group，侧边栏空白处单击新建组并行内命名（空名=取消），拖拽 tab 到组头或组区域直接入组（高亮提示），组内拖拽排序，空组保留到手动删除）、OpenMoji tab 图标（56 个精选 128px PNG 分五类打进 bundle，新 tab 随机分配且避开在用图标，右键 Change Icon 弹分类网格选择器；OpenMoji CC BY-SA 4.0 需保留署名）、驱动服务与 pigeonctl、键盘（含基本 IME preedit）、鼠标、剪贴板、标题（默认显示 OSC 7 上报的目录名，custom rename 优先）、按住 ⌘ 显示 tab 跳转序号（cmd+1-9 按侧边栏视觉顺序）、光标形状、bell、URL 打开、Ghostty 配置加载。
 
 已实现的防护与窗口行为（2026-08 补齐）：
 - **关闭确认三层齐**：tab 关闭（cmd+W/侧边栏 X）问 `ghostty_surface_needs_confirm_quit`（内核折算 confirm-close-surface 配置 + shell integration 的前台进程状态，闲置 prompt 不弹）；窗口关闭（红点）由 `WindowBridge` 的 NSWindowDelegate 转发代理拦 `windowShouldClose`；cmd+Q 走 `applicationShouldTerminate` + `ghostty_app_needs_confirm_quit`。进程退出触发的 close_surface 不弹。⚠️ 两个坑别再踩：(1) 关 tab 必须立刻 `shutdownSurface()`（主动 free 内核 surface）——SwiftUI 要到下一帧才释放 NSView，而关最后一个 tab → 关窗 → 退出确认是同步链，晚释放会让退出误弹"还有进程"；(2) 确认回调里的 `window.close()` 不会再走 `windowShouldClose`，tabs 要在回调里显式 `terminateAllTabs()` 释放，否则退出时二次确认。
 - **剪贴板确认**（`Ghostty/ClipboardConfirmation.swift`，NSAlert + 内容预览）：OSC 52 读/粘贴保护走 `confirm_read_clipboard_cb`（拒绝=完成请求但给空串）；OSC 52 写走 `write_clipboard_cb` 的 `confirm` 参数（拒绝=不动剪贴板，无需完成请求）。内核按 clipboard-read/write 配置决定是否要确认，app 只管弹窗。
 - **IME preedit 渲染**：`ghostty_surface_preedit` 同步 marked text（照抄 vendor 的 syncPreedit 时序：keyDown 里 interpretKeyEvents 后 sync、composing 判定含 markedTextBefore）。
-- **窗口尺寸**：INITIAL_SIZE（config window-width/height，单位 cells）在窗口首次出现时应用（chrome 从实际布局测量）；CELL_SIZE → `contentResizeIncrements`，拖拽缩放按字符格吸附。都在 `WindowBridge`。
+- **窗口尺寸**：上次使用的窗口 frame 持久化（`WindowFrameStore`，UserDefaults 单槽、跨窗口共享后写胜出，与侧边栏状态同一约定；移动/缩放结束/关窗时存 `frameDescriptor`，全屏时不存）；新窗口 attach 时恢复，与已有窗口完全重叠则按 28px 级联偏移。INITIAL_SIZE（config window-width/height，单位 cells）只在没有已存 frame 时应用（即首次启动，chrome 从实际布局测量）；CELL_SIZE → `contentResizeIncrements`，拖拽缩放按字符格吸附。都在 `WindowBridge`。
 
 已知简化（做功能时优先补这些）：
 - 无 split

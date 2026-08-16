@@ -104,11 +104,55 @@ private struct WorkspaceLayout: View {
                 .accessibilityIdentifier("expandSidebarButton")
             }
         }
+        .overlay(alignment: .top) {
+            // Active tab identity, centered like a native window title.
+            if workspace.sidebarCollapsed, let tab = tabManager.selectedTab {
+                CollapsedTabTitle(tab: tab, surfaceView: tab.surfaceView)
+                    .padding(.top, 11)
+            }
+        }
         .background(ghostty.backgroundColor.opacity(ghostty.backgroundOpacity))
         .background(WindowTransparencyConfigurator(opacity: ghostty.backgroundOpacity))
         .background(WindowBridge(tabManager: tabManager))
         .ignoresSafeArea()
         .frame(minWidth: 400, minHeight: 300)
+    }
+}
+
+/// Active tab identity shown in the header strip while the sidebar is
+/// collapsed: the tab's OpenMoji icon plus its display title (which
+/// follows the user's label-style setting, folder name or full path).
+private struct CollapsedTabTitle: View {
+    @ObservedObject var tab: TerminalTab
+    @ObservedObject var surfaceView: Ghostty.SurfaceView
+
+    @EnvironmentObject private var ghostty: Ghostty.App
+    // displayTitle depends on the label-style setting; observe it so the
+    // header follows changes live like the sidebar rows do.
+    @ObservedObject private var settings = AppSettings.shared
+
+    init(tab: TerminalTab, surfaceView: Ghostty.SurfaceView) {
+        self.tab = tab
+        self.surfaceView = surfaceView
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if let icon = TabIcon.image(for: tab.iconCode) {
+                Image(nsImage: icon)
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: 15, height: 15)
+            }
+            Text(tab.displayTitle)
+                .font(.system(size: 12))
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .foregroundStyle(ghostty.foregroundColor.opacity(0.6))
+        }
+        .frame(maxWidth: 380)
+        .help(surfaceView.pwd ?? surfaceView.title)
+        .accessibilityIdentifier("collapsedTabTitle")
     }
 }
 

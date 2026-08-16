@@ -124,7 +124,7 @@ struct TabSidebar: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help("Hide Sidebar (⌥⌘S)")
+                .help("Hide Sidebar (⌘B)")
                 .accessibilityIdentifier("collapseSidebarButton")
             }
             .foregroundStyle(chromeForeground.opacity(0.7))

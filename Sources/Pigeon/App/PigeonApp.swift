@@ -48,7 +48,7 @@ private struct PigeonCommands: Commands {
                     }
                 }
             }
-            .keyboardShortcut("s", modifiers: [.command, .option])
+            .keyboardShortcut("b", modifiers: .command)
         }
     }
 }
