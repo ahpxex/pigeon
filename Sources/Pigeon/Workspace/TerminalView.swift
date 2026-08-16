@@ -66,9 +66,17 @@ private struct WorkspaceLayout: View {
 
             ZStack {
                 ForEach(tabManager.tabs) { tab in
-                    TerminalSurface(
-                        surfaceView: tab.surfaceView,
-                        isActive: tab.id == tabManager.selectedTabID)
+                    ZStack {
+                        TerminalSurface(
+                            surfaceView: tab.surfaceView,
+                            isActive: tab.id == tabManager.selectedTabID)
+                        // Highlights share the surface's coordinate space;
+                        // the ZStack keeps them aligned exactly.
+                        SearchHighlights(model: tab.search)
+                    }
+                    .overlay(alignment: .topTrailing) {
+                        TabSearchBar(search: tab.search)
+                    }
                     .opacity(tab.id == tabManager.selectedTabID ? 1 : 0)
                     .allowsHitTesting(tab.id == tabManager.selectedTabID)
                 }
@@ -116,6 +124,17 @@ private struct WorkspaceLayout: View {
         .background(WindowBridge(tabManager: tabManager))
         .ignoresSafeArea()
         .frame(minWidth: 400, minHeight: 300)
+    }
+}
+
+/// Find bar for one tab, shown only while its search is open.
+private struct TabSearchBar: View {
+    @ObservedObject var search: TerminalSearchModel
+
+    var body: some View {
+        if search.isOpen {
+            SearchBar(model: search)
+        }
     }
 }
 

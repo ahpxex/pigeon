@@ -369,6 +369,42 @@ final class DriverServer {
             }
             return HTTPResponse(text: tab.surfaceView.screenText())
 
+        case ("POST", "/search"):
+            guard let tab = manager.selectedTab else {
+                return HTTPResponse(status: 404, error: "no selected tab")
+            }
+            guard let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any],
+                  let query = json["query"] as? String
+            else { return HTTPResponse(status: 400, error: "body must be {\"query\": ...}") }
+            if !tab.search.isOpen {
+                tab.search.open(surfaceView: tab.surfaceView)
+            }
+            tab.search.query = query
+            tab.search.rescan()
+            return HTTPResponse(json: searchJSON(tab.search))
+
+        case ("POST", "/search/next"), ("POST", "/search/prev"):
+            guard let tab = manager.selectedTab, tab.search.isOpen else {
+                return HTTPResponse(status: 404, error: "search not open")
+            }
+            if request.path == "/search/next" { tab.search.next() }
+            else { tab.search.previous() }
+            return HTTPResponse(json: searchJSON(tab.search))
+
+        case ("GET", "/search"):
+            guard let tab = manager.selectedTab else {
+                return HTTPResponse(status: 404, error: "no selected tab")
+            }
+            tab.search.refreshOverlay()
+            return HTTPResponse(json: searchJSON(tab.search))
+
+        case ("POST", "/search/close"):
+            guard let tab = manager.selectedTab else {
+                return HTTPResponse(status: 404, error: "no selected tab")
+            }
+            tab.search.close()
+            return HTTPResponse(json: ["ok": true])
+
         case ("GET", "/sidebar"):
             let workspace = manager.workspace
             return HTTPResponse(json: [
@@ -544,6 +580,23 @@ final class DriverServer {
         default:
             return HTTPResponse(status: 404, error: "unknown endpoint \(request.method) \(request.path)")
         }
+    }
+
+    @MainActor
+    private func searchJSON(_ search: TerminalSearchModel) -> [String: Any] {
+        var json: [String: Any] = [
+            "open": search.isOpen,
+            "query": search.query,
+            "count": search.matches.count,
+            "visible": search.visibleRects.map(rectJSON),
+        ]
+        if let index = search.currentIndex { json["index"] = index }
+        if let rect = search.currentRect { json["current"] = rectJSON(rect) }
+        return json
+    }
+
+    private func rectJSON(_ rect: CGRect) -> [String: Double] {
+        ["x": rect.minX, "y": rect.minY, "w": rect.width, "h": rect.height]
     }
 
     @MainActor

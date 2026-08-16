@@ -9,6 +9,7 @@
 #   scripts/pigeonctl type 'ls -la'     # types text (no newline)
 #   scripts/pigeonctl run 'ls -la'      # types text + enter
 #   scripts/pigeonctl text              # dump selected tab's screen text
+#   scripts/pigeonctl search 'term'     # open find + query; search next|prev|close
 #   scripts/pigeonctl screenshot out.png
 #   scripts/pigeonctl quit
 set -e
@@ -86,6 +87,15 @@ case "$1" in
     else
       curl -sf -X POST --data "$2" "$BASE/settings"
     fi
+    ;;
+  search)
+    case "$2" in
+      "")     curl -sf "$BASE/search" ;;
+      next)   curl -sf -X POST "$BASE/search/next" ;;
+      prev)   curl -sf -X POST "$BASE/search/prev" ;;
+      close)  curl -sf -X POST "$BASE/search/close" ;;
+      *)      curl -sf -X POST --data "{\"query\":$(printf '%s' "$2" | /usr/bin/python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')}" "$BASE/search" ;;
+    esac
     ;;
   reload-config) curl -sf -X POST "$BASE/config/reload" ;;
   quit)       pkill -x Pigeon ;;

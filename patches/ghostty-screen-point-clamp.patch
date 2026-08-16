@@ -1,0 +1,24 @@
+diff --git a/src/apprt/embedded.zig b/src/apprt/embedded.zig
+index 08d8291..b8b9ebc 100644
+--- a/src/apprt/embedded.zig
++++ b/src/apprt/embedded.zig
+@@ -1259,9 +1259,17 @@ pub const CAPI = struct {
+                 ),
+             };
+ 
+-            // Clamp our point to the screen bounds.
++            // Clamp our point to the screen bounds. Only spaces whose
++            // height is the viewport (active/viewport) clamp y; screen
++            // and history extend into scrollback, where out-of-range
++            // rows are rejected by pages.pin below (returns null), so
++            // callers can address — and probe the size of — the full
++            // scrollback buffer.
+             const clamped_x = @min(self.x, screen.pages.cols -| 1);
+-            const clamped_y = @min(self.y, screen.pages.rows -| 1);
++            const clamped_y = switch (self.tag) {
++                .active, .viewport => @min(self.y, screen.pages.rows -| 1),
++                .screen, .history => self.y,
++            };
+ 
+             return switch (self.coord_tag) {
+                 // Exact coordinates require a specific pin.

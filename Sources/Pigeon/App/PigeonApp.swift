@@ -40,6 +40,15 @@ private struct PigeonCommands: Commands {
             }
             .keyboardShortcut("t", modifiers: .command)
         }
+        CommandGroup(after: .textEditing) {
+            Button("Find") {
+                Task { @MainActor in
+                    guard let tab = TabManager.forKeyWindow?.selectedTab else { return }
+                    tab.search.open(surfaceView: tab.surfaceView)
+                }
+            }
+            .keyboardShortcut("f", modifiers: .command)
+        }
         CommandGroup(after: .sidebar) {
             Button("Toggle Sidebar") {
                 Task { @MainActor in

@@ -17,6 +17,9 @@ final class TerminalTab: Identifiable, ObservableObject {
     /// Sidebar group membership; nil = top level.
     @Published var groupID: TabGroup.ID?
 
+    /// Scrollback search state (cmd+F), one per tab.
+    @MainActor let search = TerminalSearchModel()
+
     init?(app: ghostty_app_t) {
         let view = Ghostty.SurfaceView(app: app)
         guard view.surface != nil else { return nil }
