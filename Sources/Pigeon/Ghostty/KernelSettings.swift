@@ -41,6 +41,17 @@ final class KernelSettings: ObservableObject {
     @Published var themeID: String? {
         didSet { UserDefaults.standard.set(themeID, forKey: "kernelThemeID") }
     }
+    /// When on, the terminal theme follows the system appearance using
+    /// the light/dark theme pair below instead of the single themeID.
+    @Published var autoTheme: Bool {
+        didSet { UserDefaults.standard.set(autoTheme, forKey: "kernelThemeAuto") }
+    }
+    @Published var lightThemeID: String? {
+        didSet { UserDefaults.standard.set(lightThemeID, forKey: "kernelLightThemeID") }
+    }
+    @Published var darkThemeID: String? {
+        didSet { UserDefaults.standard.set(darkThemeID, forKey: "kernelDarkThemeID") }
+    }
     @Published var cursorStyle: CursorStyle = .block
     @Published var backgroundOpacity: Double = 1.0
 
@@ -65,8 +76,31 @@ final class KernelSettings: ObservableObject {
 
     private init() {
         themeID = UserDefaults.standard.string(forKey: "kernelThemeID")
+        autoTheme = UserDefaults.standard.bool(forKey: "kernelThemeAuto")
+        lightThemeID = UserDefaults.standard.string(forKey: "kernelLightThemeID")
+            ?? "github-light"
+        darkThemeID = UserDefaults.standard.string(forKey: "kernelDarkThemeID")
+            ?? UserDefaults.standard.string(forKey: "kernelThemeID")
+            ?? "one-dark"
         fontFamily = UserDefaults.standard.string(forKey: "kernelFontFamily") ?? ""
         loadFromConfig()
+    }
+
+    /// The theme the managed block should paint right now: the
+    /// appearance-matched slot in auto mode, the single selection
+    /// otherwise. nil = leave colors to the config file.
+    var effectiveThemeID: String? {
+        guard autoTheme else { return themeID }
+        let dark = NSApp.effectiveAppearance
+            .bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        return dark ? darkThemeID : lightThemeID
+    }
+
+    /// Called when the system (or the in-app override) appearance flips:
+    /// in auto mode the managed block's palette must be rewritten.
+    func systemAppearanceChanged() {
+        guard autoTheme else { return }
+        apply()
     }
 
     /// Read current effective values from the loaded ghostty config.
@@ -121,7 +155,7 @@ final class KernelSettings: ObservableObject {
         lines.append("font-size = \(formatNumber(fontSize))")
         lines.append("cursor-style = \(cursorStyle.rawValue)")
         lines.append("background-opacity = \(formatNumber(backgroundOpacity))")
-        if let theme = TerminalTheme.theme(id: themeID) {
+        if let theme = TerminalTheme.theme(id: effectiveThemeID) {
             lines.append("background = \(theme.background)")
             lines.append("foreground = \(theme.foreground)")
             for (index, color) in theme.palette.enumerated() {

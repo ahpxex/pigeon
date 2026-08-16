@@ -1,6 +1,9 @@
 import AppKit
+import GhosttyKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var appearanceObserver: NSKeyValueObservation?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // When exec'd directly (driver/testing) instead of via
         // LaunchServices, the process comes up as a background app and
@@ -10,6 +13,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppSettings.shared.applyAppearance()
         AgentServer.shared.start()
         DriverServer.shared.startIfConfigured()
+
+        // Report appearance changes to libghostty (color-scheme OSC
+        // queries) and let the theme auto-switch rewrite its palette.
+        // Fires for both OS appearance flips and the in-app override.
+        appearanceObserver = NSApp.observe(
+            \.effectiveAppearance, options: [.new, .initial]
+        ) { _, change in
+            guard let appearance = change.newValue else { return }
+            let dark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            Task { @MainActor in
+                if let app = Ghostty.App.shared.app {
+                    ghostty_app_set_color_scheme(
+                        app, dark ? GHOSTTY_COLOR_SCHEME_DARK : GHOSTTY_COLOR_SCHEME_LIGHT)
+                }
+                KernelSettings.shared.systemAppearanceChanged()
+            }
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

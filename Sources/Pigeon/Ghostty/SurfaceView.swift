@@ -36,6 +36,8 @@ extension Ghostty {
 
         private var mouseShape: NSCursor = .iBeam
 
+        private var appearanceObserver: NSKeyValueObservation?
+
         /// Stable identity the shell hook echoes back on /ask (via
         /// X-Pigeon-Surface): the agent uses it to read THIS tab's screen
         /// and to keep this tab's conversation memory.
@@ -74,6 +76,18 @@ extension Ghostty {
                 return
             }
             self.surface = surface
+
+            // Report the effective appearance to libghostty so terminal
+            // programs can query the color scheme (mirrors vendor).
+            appearanceObserver = observe(
+                \.effectiveAppearance, options: [.new, .initial]
+            ) { view, change in
+                guard let appearance = change.newValue,
+                      let surface = view.surface else { return }
+                let dark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                ghostty_surface_set_color_scheme(
+                    surface, dark ? GHOSTTY_COLOR_SCHEME_DARK : GHOSTTY_COLOR_SCHEME_LIGHT)
+            }
         }
 
         required init?(coder: NSCoder) {

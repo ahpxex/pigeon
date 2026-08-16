@@ -5,6 +5,11 @@ import SwiftUI
 struct TerminalSettingsTab: View {
     @ObservedObject private var kernel = KernelSettings.shared
 
+    private enum ThemeSlot {
+        case light, dark
+    }
+    @State private var editingSlot: ThemeSlot = .light
+
     private let themeColumns = Array(
         repeating: GridItem(.flexible(), spacing: 8), count: 3)
 
@@ -29,6 +34,15 @@ struct TerminalSettingsTab: View {
             }
 
             Section("Theme") {
+                Toggle("Match system appearance", isOn: $kernel.autoTheme)
+                if kernel.autoTheme {
+                    Picker("", selection: $editingSlot) {
+                        Text("Light").tag(ThemeSlot.light)
+                        Text("Dark").tag(ThemeSlot.dark)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                }
                 LazyVGrid(columns: themeColumns, spacing: 8) {
                     themeCard(nil)
                     ForEach(TerminalTheme.all) { theme in
@@ -58,17 +72,36 @@ struct TerminalSettingsTab: View {
         .onChange(of: kernel.fontFamily) { _ in kernel.scheduleApply() }
         .onChange(of: kernel.fontSize) { _ in kernel.scheduleApply() }
         .onChange(of: kernel.themeID) { _ in kernel.scheduleApply() }
+        .onChange(of: kernel.autoTheme) { _ in kernel.scheduleApply() }
+        .onChange(of: kernel.lightThemeID) { _ in kernel.scheduleApply() }
+        .onChange(of: kernel.darkThemeID) { _ in kernel.scheduleApply() }
         .onChange(of: kernel.cursorStyle) { _ in kernel.scheduleApply() }
         .onChange(of: kernel.backgroundOpacity) { _ in kernel.scheduleApply() }
         .onAppear { kernel.loadFromConfig() }
     }
 
+    /// The theme id the card grid currently edits: the single selection,
+    /// or the light/dark slot picked by the segmented control.
+    private var editedThemeID: String? {
+        guard kernel.autoTheme else { return kernel.themeID }
+        return editingSlot == .light ? kernel.lightThemeID : kernel.darkThemeID
+    }
+
+    private func setEditedThemeID(_ id: String?) {
+        if kernel.autoTheme {
+            if editingSlot == .light { kernel.lightThemeID = id }
+            else { kernel.darkThemeID = id }
+        } else {
+            kernel.themeID = id
+        }
+    }
+
     /// Mini preview card: theme background with accent dots + name.
     @ViewBuilder
     private func themeCard(_ theme: TerminalTheme?) -> some View {
-        let isSelected = kernel.themeID == theme?.id
+        let isSelected = editedThemeID == theme?.id
         Button {
-            kernel.themeID = theme?.id
+            setEditedThemeID(theme?.id)
         } label: {
             VStack(spacing: 4) {
                 ZStack {
