@@ -20,14 +20,21 @@ import AppKit
 final class TabActivityMonitor {
     static let shared = TabActivityMonitor()
 
-    private static let sampleInterval: TimeInterval = 1
+    private static let sampleInterval: TimeInterval = 0.5
     /// A change within this window of the last keystroke is treated as
     /// typing echo, not tool output.
     private static let typingEchoWindow: TimeInterval = 2
-    /// Busy clears after this long without spontaneous output (also the
-    /// grace a fresh submit gets before its first output must appear —
-    /// Claude Code's first token can take a couple of seconds).
-    private static let busyOffAfter: TimeInterval = 3
+    /// With a foreground process running (TUI, long command), busy
+    /// clears this soon after its output stops.
+    private static let stillAfter: TimeInterval = 1.5
+    /// …but never before a fresh submit has had time to produce its
+    /// first output (Claude Code's first token can take a couple of
+    /// seconds of static screen).
+    private static let firstTokenGrace: TimeInterval = 3
+    /// Back at the shell prompt (no foreground process), busy clears
+    /// immediately — this small grace only covers the moment right
+    /// after Enter, before the shell-integration prompt marker flips.
+    private static let promptSettleGrace: TimeInterval = 0.7
 
     struct Activity {
         /// When the screen last changed for any reason (typing included).
@@ -39,7 +46,7 @@ final class TabActivityMonitor {
         /// Seconds of spontaneous output observed after the user first
         /// interacted with this tab — "the tool is doing work the user
         /// asked for". TUI startup paint (before any input) doesn't count.
-        var workSeconds = 0
+        var workSeconds: TimeInterval = 0
         /// Screen tails captured at the moment of each submit (oldest
         /// first, last few kept). At Enter time the input box still
         /// shows what the user typed, so this is the user's request —
@@ -48,6 +55,12 @@ final class TabActivityMonitor {
         var recentSubmits: [String] = []
         fileprivate var lastText = ""
         fileprivate var consecutiveSpontaneous = 0
+        /// The user has submitted input INTO a running TUI (Enter while
+        /// not at a shell prompt) and hasn't returned to the prompt
+        /// since. The spinner exists only for this: an agent chewing on
+        /// a prompt. Plain shell commands — instant or long — never
+        /// spin.
+        fileprivate var inTUISession = false
     }
 
     /// How many submit snapshots to keep per tab, and their size.
@@ -86,7 +99,14 @@ final class TabActivityMonitor {
         activity.submittedAt = Date()
 
         // The notification fires before the keypress reaches the
-        // terminal: the screen still shows the composed input.
+        // terminal, so needsConfirmQuit still reflects the pre-Enter
+        // state: true = a foreground process was already running and
+        // this Enter went INTO it (a TUI prompt submit) — the only
+        // case that lights the spinner. At a shell prompt this Enter
+        // merely starts a command; no spinner.
+        activity.inTUISession = view.needsConfirmQuit
+
+        // The screen also still shows the composed input.
         var lines = view.viewportText()
             .components(separatedBy: "\n")
             .map { $0.replacingOccurrences(of: "\\s+$", with: "", options: .regularExpression) }
@@ -104,7 +124,7 @@ final class TabActivityMonitor {
         }
 
         activities[tab.id] = activity
-        if !tab.isBusy { tab.isBusy = true }
+        if activity.inTUISession, !tab.isBusy { tab.isBusy = true }
     }
 
     /// The user is looking at this tab right now: it is selected in a
@@ -137,13 +157,14 @@ final class TabActivityMonitor {
                 if !typingEcho {
                     activity.lastSpontaneousAt = now
                     activity.consecutiveSpontaneous += 1
-                    if lastInput != nil { activity.workSeconds += 1 }
-                    // Igniting from samples alone (no submit — e.g. a
-                    // build resumes printing) takes two consecutive
-                    // changes: a lone repaint (status-line refresh after
-                    // an answer) shouldn't flash the spinner. An already
-                    // lit spinner is extended by any spontaneous change.
-                    if !tab.isBusy, activity.consecutiveSpontaneous >= 2 {
+                    if lastInput != nil { activity.workSeconds += Self.sampleInterval }
+                    // Re-ignition mid-session (the agent paused, then
+                    // resumed streaming) takes two consecutive changes
+                    // so a lone status-line repaint doesn't flash the
+                    // spinner. Only within a TUI session — output from
+                    // anything else (builds, logs) never spins.
+                    if !tab.isBusy, activity.inTUISession,
+                       activity.consecutiveSpontaneous >= 2 {
                         tab.isBusy = true
                     }
                 } else {
@@ -153,14 +174,32 @@ final class TabActivityMonitor {
                 activity.consecutiveSpontaneous = 0
             }
 
-            let aliveUntil = max(activity.lastSpontaneousAt, activity.submittedAt)
-                .addingTimeInterval(Self.busyOffAfter)
-            if tab.isBusy, now >= aliveUntil {
-                tab.isBusy = false
-                // Work just finished; flag it unless the user watched
-                // it happen.
-                if !isViewed(tab, in: manager) {
-                    tab.hasUnread = true
+            // Back at a shell prompt: whatever TUI the user was talking
+            // to is gone (or was never there); the session ends.
+            if activity.inTUISession, !tab.surfaceView.needsConfirmQuit {
+                activity.inTUISession = false
+            }
+
+            if tab.isBusy {
+                let sinceSubmit = now.timeIntervalSince(activity.submittedAt)
+                let sinceOutput = now.timeIntervalSince(activity.lastSpontaneousAt)
+                // needsConfirmQuit (default config) is the kernel's
+                // "cursor is not at a shell prompt" — i.e. a foreground
+                // command or TUI is running. Back at the prompt the work
+                // is over, no matter how recent the last output was: an
+                // instant command must not wear the spinner for seconds.
+                // With a process running (Claude Code / Codex / pi, a
+                // build), the spinner dies as soon as output stops.
+                let done = tab.surfaceView.needsConfirmQuit
+                    ? sinceOutput >= Self.stillAfter && sinceSubmit >= Self.firstTokenGrace
+                    : sinceSubmit >= Self.promptSettleGrace
+                if done {
+                    tab.isBusy = false
+                    // Work just finished; flag it unless the user
+                    // watched it happen.
+                    if !isViewed(tab, in: manager) {
+                        tab.hasUnread = true
+                    }
                 }
             }
             if tab.hasUnread, isViewed(tab, in: manager) {

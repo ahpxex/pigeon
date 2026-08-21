@@ -12,6 +12,11 @@ struct GeneralSettingsTab: View {
                 }
                 .pickerStyle(.radioGroup)
 
+                Toggle("Group tabs by folder", isOn: $settings.autoGroupByFolder)
+                Text("cd into a folder and the tab joins (or creates) that folder's group; cd home leaves it. Manual grouping holds until the next directory change.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
                 Toggle("AI tab titles", isOn: $settings.aiTabTitles)
                 Text("Names each tab once — after it has produced enough output — using the AI provider from the Agent tab. Right-click a tab and choose Summarize Title to refresh anytime; a manual rename always wins.")
                     .font(.caption)

@@ -589,6 +589,9 @@ final class DriverServer {
             if let enabled = json["aiTabTitles"] as? Bool {
                 settings.aiTabTitles = enabled
             }
+            if let enabled = json["autoGroupByFolder"] as? Bool {
+                settings.autoGroupByFolder = enabled
+            }
             return HTTPResponse(json: settingsJSON())
 
         default:
@@ -634,6 +637,7 @@ final class DriverServer {
             "appearance": settings.appearance.rawValue,
             "accentHex": settings.accentHex as Any,
             "aiTabTitles": settings.aiTabTitles,
+            "autoGroupByFolder": settings.autoGroupByFolder,
         ]
     }
 

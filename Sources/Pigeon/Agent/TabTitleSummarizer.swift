@@ -28,13 +28,13 @@ final class TabTitleSummarizer {
     /// A work session counts once the tool has produced this many
     /// seconds of spontaneous output after user input — filters out
     /// prompt echo and instant commands like `ls`.
-    private static let minWorkSeconds = 3
+    private static let minWorkSeconds: TimeInterval = 3
     /// …and the summary fires when the screen has then been quiet this
     /// long (the task finished or paused, content shows the outcome)…
     private static let settleSeconds: TimeInterval = 4
     /// …or immediately once this much sustained work has accumulated —
     /// a long-running agent shouldn't keep its tab unnamed for minutes.
-    private static let longWorkSeconds = 15
+    private static let longWorkSeconds: TimeInterval = 15
     /// Debounce for the manual action (double-clicked menu items).
     private static let manualDebounce: TimeInterval = 3
 

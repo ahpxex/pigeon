@@ -23,6 +23,14 @@ final class TerminalTab: Identifiable, ObservableObject {
     /// Sidebar group membership; nil = top level.
     @Published var groupID: TabGroup.ID?
 
+    /// Last directory folder auto-grouping acted on. A manual group
+    /// assignment sticks until the shell actually changes directory
+    /// again — only a real cwd change re-engages auto-grouping.
+    var lastAutoGroupedPwd: String?
+    /// Subscription to the surface's OSC 7 pwd reports (set up by the
+    /// owning TabManager).
+    var pwdObserver: AnyCancellable?
+
     /// The terminal is producing output on its own (a build, a coding
     /// agent working, …) — the sidebar swaps the icon for a spinner.
     /// Maintained by TabActivityMonitor.
@@ -70,6 +78,11 @@ final class TabGroup: Identifiable, ObservableObject {
     let id = UUID()
     @Published var name: String
     @Published var isExpanded = true
+
+    /// Directory this group was auto-created for (folder auto-grouping).
+    /// nil = user-created; auto groups are pruned when they empty out,
+    /// user groups stay until deleted.
+    var autoPath: String?
 
     init(name: String) {
         self.name = name
@@ -169,7 +182,56 @@ final class TabManager: ObservableObject {
             category: AppSettings.shared.iconCategory)
         tabs.append(tab)
         selectedTabID = tab.id
+        observePwd(tab)
         return tab
+    }
+
+    // MARK: Folder auto-grouping
+
+    /// Follow the shell's OSC 7 pwd reports: a tab entering a directory
+    /// joins (or creates) that directory's group, named after the
+    /// folder. Home counts as "no project" and returns the tab to the
+    /// top level. Only reacts to actual cwd *changes*, so a manual
+    /// group assignment holds until the next cd.
+    private func observePwd(_ tab: TerminalTab) {
+        tab.pwdObserver = tab.surfaceView.$pwd
+            .removeDuplicates()
+            .sink { [weak self, weak tab] pwd in
+                guard let self, let tab else { return }
+                self.autoGroup(tab, pwd: pwd)
+            }
+    }
+
+    private func autoGroup(_ tab: TerminalTab, pwd: String?) {
+        guard AppSettings.shared.autoGroupByFolder,
+              let pwd, !pwd.isEmpty,
+              tab.lastAutoGroupedPwd != pwd
+        else { return }
+        let previous = tab.lastAutoGroupedPwd
+        tab.lastAutoGroupedPwd = pwd
+
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        if pwd == home {
+            // Genuinely cd'ing back home leaves the group; the shell's
+            // *initial* report (previous == nil) must not tear a fresh
+            // tab out of the group it inherited from the selected tab.
+            if previous != nil { assign(tab, to: nil) }
+        } else {
+            let label = TerminalTab.folderLabel(pwd)
+            let group = groups.first { $0.autoPath == pwd }
+                ?? groups.first { $0.name == label }
+                ?? createGroup(named: label)
+            group.autoPath = pwd
+            assign(tab, to: group)
+        }
+        pruneEmptyAutoGroups()
+    }
+
+    /// Auto-created groups vanish once their last tab moves on; groups
+    /// the user made keep the existing keep-until-deleted behavior.
+    private func pruneEmptyAutoGroups() {
+        let occupied = Set(tabs.compactMap(\.groupID))
+        groups.removeAll { $0.autoPath != nil && !occupied.contains($0.id) }
     }
 
     /// Close a tab, asking first when its process is still running (the
@@ -198,6 +260,8 @@ final class TabManager: ObservableObject {
         guard let index = tabs.firstIndex(where: { $0.id == tab.id }) else { return }
         let window = tab.surfaceView.window
         tabs.remove(at: index)
+        tab.pwdObserver = nil
+        pruneEmptyAutoGroups()
         // Free the kernel surface now; the view itself lingers until
         // SwiftUI re-renders, and close-then-quit checks the kernel first.
         tab.surfaceView.shutdownSurface()

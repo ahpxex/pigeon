@@ -33,6 +33,12 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(aiTabTitles, forKey: "aiTabTitles") }
     }
 
+    /// Group tabs by working directory automatically: cd into a folder
+    /// joins (or creates) that folder's group (TabManager.autoGroup).
+    @Published var autoGroupByFolder: Bool {
+        didSet { defaults.set(autoGroupByFolder, forKey: "autoGroupByFolder") }
+    }
+
     /// OpenMoji category new tabs draw random icons from; nil = all.
     @Published var iconCategory: String? {
         didSet { defaults.set(iconCategory, forKey: "iconCategory") }
@@ -61,6 +67,8 @@ final class AppSettings: ObservableObject {
     private init() {
         labelStyle = LabelStyle(rawValue: defaults.string(forKey: "labelStyle") ?? "") ?? .folderName
         aiTabTitles = defaults.bool(forKey: "aiTabTitles")
+        // Default on: distinct from bool(forKey:), which defaults to false.
+        autoGroupByFolder = defaults.object(forKey: "autoGroupByFolder") as? Bool ?? true
         iconCategory = defaults.string(forKey: "iconCategory")
         appearance = Appearance(rawValue: defaults.string(forKey: "appearance") ?? "") ?? .system
         accentHex = defaults.string(forKey: "accentHex")
