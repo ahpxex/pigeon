@@ -18,27 +18,30 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PORT="${PIGEON_DRIVER_PORT:-8790}"
 BASE="http://127.0.0.1:$PORT"
 APP="$ROOT/build/Build/Products/Debug/Pigeon.app"
+# The dev build only. Match by executable path, never by name: the
+# production Pigeon (dev.ahpx.pigeon, /Applications) shares the process
+# name and routinely runs alongside — it must never be touched.
+DEV_BIN="$APP/Contents/MacOS/Pigeon"
 
 case "$1" in
   launch)
-    if pgrep -x Pigeon >/dev/null; then
-      echo "Pigeon already running (pkill -x Pigeon to stop)" >&2
+    if pgrep -qf "$DEV_BIN"; then
+      echo "Pigeon Dev already running (scripts/pigeonctl quit to stop)" >&2
       exit 1
     fi
     # Must go through LaunchServices (open): a directly exec'd binary from
     # a background shell comes up headless (no window server session for
-    # SwiftUI scenes). Env passes via launchd, cleared once the driver is up.
-    launchctl setenv PIGEON_DRIVER_PORT "$PORT"
-    open "$APP"
+    # SwiftUI scenes). --env scopes the driver port to this instance only
+    # (the old launchctl setenv was user-global and could leak into a
+    # production Pigeon launched in the same window).
+    open --env "PIGEON_DRIVER_PORT=$PORT" "$APP"
     for _ in {1..50}; do
       if curl -sf "$BASE/state" >/dev/null 2>&1; then
-        launchctl unsetenv PIGEON_DRIVER_PORT
         echo "ready on $BASE"
         exit 0
       fi
       sleep 0.2
     done
-    launchctl unsetenv PIGEON_DRIVER_PORT
     echo "driver did not come up on $BASE" >&2
     exit 1
     ;;
@@ -98,7 +101,7 @@ case "$1" in
     esac
     ;;
   reload-config) curl -sf -X POST "$BASE/config/reload" ;;
-  quit)       pkill -x Pigeon ;;
+  quit)       pkill -f "$DEV_BIN" ;;
   *)
     sed -n '2,15p' "$0" >&2
     exit 1

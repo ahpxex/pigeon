@@ -63,6 +63,10 @@ final class AgentSettings: ObservableObject {
     ]
 
     private init() {
+        // All credential access goes through this singleton, so seeding
+        // here runs before any read or write can observe a missing store.
+        CredentialsStore.seedFromProductionIfNeeded()
+
         var loaded: [AgentProvider]
         if let data = defaults.data(forKey: "agentProviders"),
            let saved = try? JSONDecoder().decode([AgentProvider].self, from: data),
@@ -196,8 +200,9 @@ final class AgentSettings: ObservableObject {
     }
 }
 
-/// API-key store: a user-only JSON file at ~/.config/pigeon/credentials.json
-/// mapping provider ID → key.
+/// API-key store: a user-only JSON file at credentials.json in the
+/// variant's config dir (~/.config/pigeon, or ~/.config/pigeon-dev for
+/// the dev build) mapping provider ID → key.
 ///
 /// Deliberately NOT the macOS Keychain: Keychain item ACLs are bound to
 /// the app's code identity, and for an app built from source that means
@@ -207,8 +212,24 @@ final class AgentSettings: ObservableObject {
 /// disk encryption covers at rest.
 private enum CredentialsStore {
     static var url: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".config/pigeon/credentials.json")
+        AppVariant.configDirectoryURL.appendingPathComponent("credentials.json")
+    }
+
+    /// A fresh dev environment starts from a copy of the production keys
+    /// (built-in provider UUIDs are fixed constants, so the entries map
+    /// cleanly). A copy, not a shared file: the two apps must never write
+    /// into each other's store.
+    static func seedFromProductionIfNeeded() {
+        let fm = FileManager.default
+        guard AppVariant.isDev, !fm.fileExists(atPath: url.path) else { return }
+        let production = AppVariant.productionConfigDirectoryURL
+            .appendingPathComponent("credentials.json")
+        guard let data = try? Data(contentsOf: production) else { return }
+        try? fm.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        fm.createFile(
+            atPath: url.path, contents: data,
+            attributes: [.posixPermissions: 0o600])
     }
 
     static func read(account: String) -> String? {

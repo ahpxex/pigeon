@@ -7,7 +7,7 @@ struct AdvancedSettingsTab: View {
         Form {
             Section("Config file") {
                 LabeledContent("Path") {
-                    Text("~/.config/pigeon/config")
+                    Text("\(AppVariant.configDirectoryDisplayPath)/config")
                         .font(.caption.monospaced())
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)

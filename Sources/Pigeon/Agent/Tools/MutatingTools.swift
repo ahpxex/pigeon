@@ -2,40 +2,47 @@ import Foundation
 
 /// Mutating counterpart of RunReadOnlyCommand. Same injection-free shape —
 /// argv arrays, allowlisted bare binaries, direct exec, never a shell.
-/// Reversible calls (mv, cp, mkdir, chmod, git add/commit…) run freely;
-/// only irrecoverable ones (rm, git clean, git reset --hard) stop for
-/// user confirmation, with a natural-language `intent` as the prompt.
+/// Reversible calls (mv, cp, mkdir, chmod, git add/commit/fetch/pull/
+/// clone…) run freely; irrecoverable ones (rm, git clean, git reset
+/// --hard) and outward-facing ones (git push) stop for user
+/// confirmation, with a natural-language `intent` as the prompt.
 struct RunMutatingCommand: AgentTool {
     /// Binaries that mutate the filesystem or repository state. The
     /// allowlist keeps the surface intentional: no network, no
     /// interpreters, no installs.
-    static let allowedBinaries: [String] = [
+    static let   allowedBinaries: [String] = [
         "mv", "cp", "mkdir", "rmdir", "touch", "ln", "rm", "chmod", "git",
     ]
 
-    /// git subcommands allowed here: local working-tree/history edits.
-    /// Nothing that talks to a remote (push/pull/fetch) — the agent's
-    /// blast radius stays on this machine.
+    /// git subcommands allowed here: working-tree/history edits plus
+    /// remote traffic. fetch/pull/clone run freely (recoverable via
+    /// reflog at worst); push is outward-facing and asks the user first.
     private static let gitSubcommands: Set<String> = [
         "add", "commit", "restore", "switch", "checkout", "mv", "rm",
         "stash", "tag", "branch", "reset", "clean",
+        "fetch", "pull", "push", "clone",
     ]
 
-    /// Same config-injection holes as the read-only tool.
-    private static let dangerousGitFlags = ["-c", "--exec-path", "--upload-pack", "-P"]
+    /// Same config-injection holes as the read-only tool. --receive-pack
+    /// runs locally for file:// remotes — an exec hole, like --upload-pack.
+    private static let dangerousGitFlags = [
+        "-c", "--exec-path", "--upload-pack", "--receive-pack", "-P",
+    ]
 
     var spec: AgentToolSpec {
         AgentToolSpec(
             name: "run_mutating_command",
             description: """
-            Run a command that CHANGES files (move, copy, delete, mkdir, \
-            chmod, local git operations). Pass argv as arrays (no shell). \
+            Run a command that CHANGES files or repository state (move, \
+            copy, delete, mkdir, chmod, git — including fetch, pull, \
+            clone, push). Pass argv as arrays (no shell). \
             Allowed binaries: \
             \(Self.allowedBinaries.sorted().joined(separator: ", ")). \
-            Reversible operations run immediately. Destructive ones (rm, \
-            git clean, git reset --hard) ask the user first — for those, \
-            set `intent` to one short sentence in the user's language \
-            saying exactly what gets deleted. Prefer the `trash` tool \
+            Reversible operations (and git fetch/pull/clone) run \
+            immediately. Destructive or outward-facing ones (rm, git \
+            clean, git reset --hard, git push) ask the user first — for \
+            those, set `intent` to one short sentence in the user's \
+            language saying exactly what happens. Prefer the `trash` tool \
             over rm so files stay recoverable. \
             Example: {"pipeline":[["mv","old.txt","new.txt"]]}.
             """,
@@ -59,16 +66,18 @@ struct RunMutatingCommand: AgentTool {
             ])
     }
 
-    /// A call is sensitive when it can destroy data with no way back.
-    /// Everything else (mv, cp, mkdir, chmod, git add/commit/stash…) is
+    /// A call is sensitive when it can destroy data with no way back, or
+    /// when it publishes state beyond this machine (git push). Everything
+    /// else (mv, cp, mkdir, chmod, git add/commit/fetch/pull/clone…) is
     /// recoverable enough to run freely.
-    static func isDestructive(_ pipeline: [[String]]) -> Bool {
+    static func needsConfirmation(_ pipeline: [[String]]) -> Bool {
         for argv in pipeline {
             guard let binary = argv.first else { continue }
             if binary == "rm" { return true }
             if binary == "git" {
                 let subcommand = argv.dropFirst().first { !$0.hasPrefix("-") }
                 if subcommand == "clean" { return true }
+                if subcommand == "push" { return true }
                 if subcommand == "reset", argv.contains("--hard") { return true }
             }
         }
@@ -77,7 +86,7 @@ struct RunMutatingCommand: AgentTool {
 
     func confirmationRequest(arguments: [String: Any], cwd: String) -> ConfirmationRequest? {
         guard let pipeline = arguments["pipeline"] as? [[String]],
-              Self.isDestructive(pipeline) else { return nil }
+              Self.needsConfirmation(pipeline) else { return nil }
         let command = Self.displayString(pipeline)
         let intent = (arguments["intent"] as? String)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -115,7 +124,17 @@ struct RunMutatingCommand: AgentTool {
             stages.append(.init(path: path, arguments: Array(argv.dropFirst())))
         }
 
-        let result = await ProcessRunner.run(pipeline: stages, cwd: cwd, timeout: 20, outputLimit: 8_000)
+        // Remote git traffic (clone of a real repo, pull over a slow
+        // link) can legitimately take minutes; local file operations
+        // never should.
+        let remoteSubcommands: Set<String> = ["fetch", "pull", "push", "clone"]
+        let touchesRemote = rawStages.contains { argv in
+            argv.first == "git" && argv.dropFirst().first(where: { !$0.hasPrefix("-") })
+                .map(remoteSubcommands.contains) == true
+        }
+        let result = await ProcessRunner.run(
+            pipeline: stages, cwd: cwd,
+            timeout: touchesRemote ? 300 : 20, outputLimit: 8_000)
         return AgentToolResult(
             ok: result.exitCode == 0,
             output: result.output.isEmpty ? "(no output, exit \(result.exitCode))" : result.output,

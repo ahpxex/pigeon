@@ -2,12 +2,10 @@ import Foundation
 
 /// The agent loop, shaped after Pi's agent-loop but sized for Pigeon's
 /// micro-task scope: stream an assistant turn, execute requested tools
-/// sequentially, feed results back, repeat — bounded by a small round
-/// budget because our tasks are supposed to be one-shot.
+/// sequentially, feed results back, repeat until the model stops asking
+/// for tools. No round cap — stopping is the user's call (Ctrl+C drops
+/// the stream, which cancels the loop).
 enum AgentRuntime {
-    /// Hard cap on model round-trips per request.
-    static let maxRounds = 6
-
     struct RunConfig {
         var baseURL: String
         var apiKey: String
@@ -54,12 +52,13 @@ enum AgentRuntime {
         user anything.
         - File changes: use mutating tools only when the user asked for a \
         change. Reversible operations (move, copy, create, trash, git \
-        add/commit) run immediately. To delete, ALWAYS prefer `trash` \
-        over rm — it's recoverable and needs no confirmation. Destructive \
-        calls (rm, git clean, git reset --hard, overwriting an existing \
-        file) prompt the user: set `intent` to one short sentence in the \
-        user's language saying exactly what is lost. If the user \
-        declines, stop and acknowledge — never retry.
+        add/commit, git fetch/pull/clone) run immediately. To delete, \
+        ALWAYS prefer `trash` over rm — it's recoverable and needs no \
+        confirmation. Destructive or outward-facing calls (rm, git clean, \
+        git reset --hard, git push, overwriting an existing file) prompt \
+        the user: set `intent` to one short sentence in the user's \
+        language saying exactly what happens. If the user declines, stop \
+        and acknowledge — never retry.
         - Keep the final answer under ~15 lines.
 
         Context: working directory is \(cwd), OS is macOS.
@@ -87,7 +86,7 @@ enum AgentRuntime {
             + [.user(config.prompt)]
         let tools = BuiltinTools.all
 
-        for _ in 0..<maxRounds {
+        while true {
             if Task.isCancelled {
                 continuation.yield(.finished(.aborted, message: nil))
                 return
@@ -133,10 +132,6 @@ enum AgentRuntime {
                 messages.append(.toolResult(callID: call.id, result.output))
             }
         }
-
-        continuation.yield(.finished(
-            .error,
-            message: "round budget (\(maxRounds)) exhausted — task too large for the built-in agent"))
     }
 
     private static func execute(

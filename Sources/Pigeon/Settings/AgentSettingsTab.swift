@@ -54,7 +54,7 @@ private struct ProviderSection: View {
                     }
             }
 
-            SecureField("API key", text: $apiKey, prompt: Text("Stored in ~/.config/pigeon"))
+            SecureField("API key", text: $apiKey, prompt: Text("Stored in \(AppVariant.configDirectoryDisplayPath)"))
                 .onSubmit { agent.setAPIKey(apiKey, for: provider) }
                 .onChange(of: apiKey) { newValue in
                     // Compare against the stored key BEFORE writing so the

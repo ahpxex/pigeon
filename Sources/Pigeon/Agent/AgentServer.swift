@@ -30,9 +30,8 @@ import Security
 final class AgentServer {
     static let shared = AgentServer()
 
-    /// Fixed port keeps the shell hook simple; if it's taken we walk up.
-    /// Reading the port starts the server if needed — surfaces may be
-    /// created before applicationDidFinishLaunching.
+    /// The bound port. Reading it starts the server if needed — surfaces
+    /// may be created before applicationDidFinishLaunching.
     var port: UInt16 {
         start()
         return boundPort
@@ -54,23 +53,47 @@ final class AgentServer {
 
     func start() {
         guard listener == nil else { return }
-        for candidate in UInt16(8791)...UInt16(8799) {
-            let params = NWParameters.tcp
-            params.requiredLocalEndpoint = NWEndpoint.hostPort(
-                host: "127.0.0.1", port: NWEndpoint.Port(rawValue: candidate)!)
-            guard let listener = try? NWListener(using: params) else { continue }
-            self.listener = listener
-            self.boundPort = candidate
-            listener.newConnectionHandler = { [weak self] connection in
-                guard let self else { return }
-                connection.start(queue: self.queue)
-                self.receive(connection, buffer: Data())
-            }
-            listener.start(queue: queue)
-            Ghostty.logger.info("agent server on 127.0.0.1:\(candidate)")
+        // Port 0: the kernel assigns a free ephemeral port. The port is
+        // injected into each surface's environment, so nothing needs it
+        // to be predictable — and a fixed range would collide when
+        // several Pigeon instances run side by side (production + dev).
+        // A fixed-port bind conflict is especially treacherous with
+        // NWListener: creation succeeds and only the post-start state
+        // callback reports the failure, so a naive scan "binds" a port
+        // another instance owns and traffic silently crosses instances.
+        let params = NWParameters.tcp
+        params.requiredLocalEndpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: .any)
+        guard let listener = try? NWListener(using: params) else {
+            Ghostty.logger.error("agent server: failed to create listener")
             return
         }
-        Ghostty.logger.error("agent server: no free port in 8791-8799")
+        self.listener = listener
+        listener.newConnectionHandler = { [weak self] connection in
+            guard let self else { return }
+            connection.start(queue: self.queue)
+            self.receive(connection, buffer: Data())
+        }
+        // Wait for the bind to actually complete: boundPort is read (and
+        // handed to the first surface's environment) immediately after
+        // start() returns, so returning before .ready would hand out 0.
+        let settled = DispatchSemaphore(value: 0)
+        listener.stateUpdateHandler = { state in
+            switch state {
+            case .ready, .failed, .cancelled: settled.signal()
+            default: break
+            }
+        }
+        listener.start(queue: queue)
+        _ = settled.wait(timeout: .now() + 5)
+        listener.stateUpdateHandler = nil
+        guard case .ready = listener.state, let bound = listener.port else {
+            Ghostty.logger.error("agent server: bind failed state=\(String(describing: listener.state))")
+            listener.cancel()
+            self.listener = nil
+            return
+        }
+        boundPort = bound.rawValue
+        Ghostty.logger.info("agent server on 127.0.0.1:\(bound.rawValue)")
     }
 
     // MARK: HTTP plumbing (request parse + chunked streaming response)

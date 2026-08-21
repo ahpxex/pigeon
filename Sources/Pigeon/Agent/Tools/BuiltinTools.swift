@@ -44,13 +44,17 @@ enum ToolBinaries {
 /// per-binary flag rejection are defense-in-depth on top of that.
 struct RunReadOnlyCommand: AgentTool {
     /// Binary name → absolute path (first match wins). Only these run.
-    /// Nothing here mutates files, installs, or (with the flag rules
-    /// below) reaches the network or executes other programs.
+    /// Nothing here mutates local files, installs, or (with the flag
+    /// rules below) executes other programs. Network reads — HTTP via
+    /// curl, DNS lookups, ping — are allowed: they leave this machine's
+    /// state untouched.
     static let allowedBinaries: [String] = [
         "ls", "find", "du", "df", "file", "stat", "wc", "head", "tail",
         "cat", "grep", "ps", "lsof", "whoami", "id", "date", "uname",
         "which", "pwd", "uptime", "sw_vers", "mdfind", "codesign",
         "git", "tree",
+        "curl", "ping", "dig", "host", "nslookup", "whois", "netstat",
+        "traceroute",
     ]
 
     /// Flags that turn an otherwise read-only binary into an arbitrary
@@ -61,13 +65,32 @@ struct RunReadOnlyCommand: AgentTool {
         // git -c injects config (core.pager/sshCommand/... = arbitrary
         // exec); the read-only subcommand allowlist is enforced separately.
         "git": ["-c", "--exec-path", "--upload-pack", "-P"],
+        // curl stays network-only: no writing local files (-o/-O and
+        // friends), no reading stored credentials (netrc), no config
+        // files, no uploads of local files via -T, no talking to local
+        // daemons through unix sockets (Docker's API is code execution).
+        "curl": ["--output", "--remote-name", "--remote-name-all",
+                 "--remote-header-name", "--output-dir", "--create-dirs",
+                 "--cookie-jar", "--dump-header", "--trace",
+                 "--trace-ascii", "--trace-config", "--libcurl",
+                 "--etag-save", "--alt-svc", "--hsts", "--config",
+                 "--upload-file", "--netrc", "--netrc-file",
+                 "--netrc-optional", "--unix-socket",
+                 "--abstract-unix-socket"],
     ]
 
+    /// Short-option letters for the curl flags above. curl clusters
+    /// short options ("-sSo out.txt"), so equality checks on "-o" alone
+    /// would miss them; any single-dash cluster containing one of these
+    /// is rejected.
+    private static let curlDangerousShortLetters = Set("oOJcDKTn")
+
     /// git is powerful; only these subcommands are read-only enough.
+    /// ls-remote reaches the network but only lists remote refs.
     private static let gitSubcommands: Set<String> = [
         "log", "status", "diff", "show", "branch", "remote", "rev-parse",
         "describe", "ls-files", "blame", "tag", "shortlog", "config",
-        "cat-file", "count-objects", "grep",
+        "cat-file", "count-objects", "grep", "ls-remote",
     ]
 
     var spec: AgentToolSpec {
@@ -77,10 +100,13 @@ struct RunReadOnlyCommand: AgentTool {
             Run a READ-ONLY command in the user's working directory. Pass \
             argv as arrays (no shell). Allowed binaries: \
             \(Self.allowedBinaries.sorted().joined(separator: ", ")). \
-            For a pipeline, list multiple stages. Anything that writes, \
-            deletes, installs, or reaches the network is rejected. \
+            For a pipeline, list multiple stages. Network reads are fine \
+            (curl an API, dig a domain, ping a host) but anything that \
+            writes local files, deletes, or installs is rejected — for \
+            curl that means no -o/-O style output flags; its response \
+            body comes back as tool output. \
             Examples: {"pipeline":[["lsof","-i",":3000"]]} or \
-            {"pipeline":[["ls","-la"],["wc","-l"]]}.
+            {"pipeline":[["curl","-s","https://api.example.com/status"]]}.
             """,
             parameters: [
                 "type": "object",
@@ -115,6 +141,14 @@ struct RunReadOnlyCommand: AgentTool {
             }) {
                 return reject("'\(bad)' is not allowed for \(first)", display: displayString(rawStages))
             }
+            // curl clusters short options ("-sSo out.txt" writes a file);
+            // reject any single-dash cluster carrying a blocked letter.
+            if first == "curl", let bad = argv.dropFirst().first(where: { arg in
+                arg.hasPrefix("-") && !arg.hasPrefix("--")
+                    && arg.dropFirst().contains(where: { Self.curlDangerousShortLetters.contains($0) })
+            }) {
+                return reject("'\(bad)' carries a flag not allowed for curl", display: displayString(rawStages))
+            }
             if first == "git", let sub = argv.dropFirst().first(where: { !$0.hasPrefix("-") }),
                !Self.gitSubcommands.contains(sub) {
                 return reject("git \(sub) is not a read-only subcommand", display: displayString(rawStages))
@@ -122,7 +156,18 @@ struct RunReadOnlyCommand: AgentTool {
             stages.append(.init(path: path, arguments: Array(argv.dropFirst())))
         }
 
-        let result = await ProcessRunner.run(pipeline: stages, cwd: cwd, timeout: 10, outputLimit: 8_000)
+        // Network lookups get more slack than local reads: a slow API or
+        // a far-away host is normal, a slow `ls` is not.
+        let networkBinaries: Set<String> = [
+            "curl", "ping", "dig", "host", "nslookup", "whois", "traceroute",
+        ]
+        let touchesNetwork = rawStages.contains { argv in
+            argv.first.map(networkBinaries.contains) == true
+                || (argv.first == "git" && argv.contains("ls-remote"))
+        }
+        let result = await ProcessRunner.run(
+            pipeline: stages, cwd: cwd,
+            timeout: touchesNetwork ? 30 : 10, outputLimit: 8_000)
         return AgentToolResult(
             ok: result.exitCode == 0,
             output: result.output.isEmpty ? "(no output, exit \(result.exitCode))" : result.output,

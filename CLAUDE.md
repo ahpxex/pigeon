@@ -84,6 +84,15 @@ open build/Build/Products/Debug/Pigeon.app   # 或从 Xcode 跑
 
 只改 Swift 代码时不需要重跑 zig；改了 vendor/ghostty 或升级 tag 才需要 `scripts/build-ghostty.sh`（native）/ `scripts/build-ghostty.sh universal`（发布用双架构）。
 
+### 开发版与生产版并行（dev/prod 隔离）
+
+Debug 构建是独立的 app "**Pigeon Dev**"，与安装在 /Applications 的生产版并行运行、互不干扰：
+
+- **身份**：Debug 的 bundle id 是 `dev.ahpx.pigeon.dev`（Release 是 `dev.ahpx.pigeon`），project.yml 按构建配置区分。不同 bundle id 意味着：独立 UserDefaults（窗口 frame/侧边栏/AppSettings/Provider 列表全自动隔离）、独立 LaunchServices 身份（`open` 会启动新实例而不是激活生产版）。名字（"Pigeon Dev"）与图标（DEV 角标，`AppIconDev.appiconset`）也按配置区分；换了底图后跑 `/usr/bin/swift scripts/make-dev-icon.swift` 重新生成角标图标。
+- **配置目录**：由 bundle id 后缀派生（`App/AppVariant.swift`，唯一事实来源，不用 #if DEBUG——Release 构建无论怎么跑都是生产行为）。dev 用 `~/.config/pigeon-dev/`，首启从生产目录播种：kernel config 复制生产 config（其次才是 Ghostty 的），credentials.json 复制一份（0600，AgentSettings init 时播种）——是复制不是共享，两边永不互写。
+- **pigeonctl 只认 dev 实例**：pgrep/pkill 按可执行文件完整路径匹配（`build/Build/Products/Debug/...`），`quit` 永远不会杀到生产版。驱动端口用 `open --env` 随进程注入（老的 `launchctl setenv` 是用户级全局变量，会泄漏给同窗口期启动的生产实例，别改回去）。
+- **AgentServer 端口是系统分配的临时端口**（port 0 + 等 listener .ready 后读回），不是固定 8791 —— 固定端口在双实例下必撞，且 NWListener 的坑：创建不报错、start 之后 state 回调才报 bind 失败，天真的扫描会"绑上"别的实例占的端口，流量静默串门（已踩过：dev 的 /ask 全 403，因为打到了生产实例）。端口本来就逐 surface 注入 env，没有任何东西需要它可预测。
+
 ### 构建环境的坑（都已在脚本里处理，但要知道为什么）
 
 - **zig 版本必须 0.14.x**（Ghostty v1.2.3 要求；系统的 zig 0.15 编不过）。用 keg-only 的 `brew install zig@0.14`，路径 `/opt/homebrew/opt/zig@0.14/bin/zig`。
@@ -93,18 +102,19 @@ open build/Build/Products/Debug/Pigeon.app   # 或从 Xcode 跑
 - **Debug 构建用本地自签证书 "Pigeon Dev" 签名**（project.yml `CODE_SIGN_IDENTITY`），新机器先跑一次 `scripts/dev-signing-setup.sh`（生成+导入+信任+partition list，中途要输两次密码）。别退回 ad-hoc（`-`）签名：代码身份每次构建都变。构建时如果 xcodebuild 长时间无输出，先查 SecurityAgent 弹框（codesign 等钥匙授权）。
 - 链接需要 `-lstdc++`（libghostty-fat.a 里静态包了 harfbuzz 等 C++ 依赖），已写在 project.yml。
 - App 不能开沙盒（终端要以用户权限起 shell），和 Ghostty/iTerm2 一样。
+- **`xcodegen generate` 之后（或改了 build settings）先 `rm -rf build` 再构建**。旧 build 目录的陈旧增量状态会产出能启动但 `ghostty_surface_new` 必失败（err=OutOfMemory、开窗无 tab）的坏产物，全新目录构建就正常——已踩过，别在坏产物上浪费排查时间。
 
 ## Agent（终端原生入口）
 
 入口就是终端本身：输入合法命令照常执行；首词不是命令时 zsh 调 `command_not_found_handler`（构建时追加到打包的 shell integration，`scripts/pigeon-integration.zsh`），整行作为自然语言 curl 到 app 内的 AgentServer（常驻 localhost，端口经 surface env `PIGEON_AGENT_PORT` 注入），回答以 chunked 流直接打回 pty（工具行灰色 ANSI）。Ctrl+C 打断 curl 即取消。
 
-运行时架构抄 Pi 的设计语法（等效 Swift 实现在 `Agent/`）：ChatStreamClient 遵守"永不 throw"契约（错误编码进事件流）；AgentRuntime 是 ≤6 轮的顺序工具 loop；事件类型化（AgentEvent）。工具按可恢复性分档：只读（run_command/list_dir/read_file）与可恢复变更（mv/cp/mkdir/chmod/git add·commit、写新文件、`trash`=原生 FileManager.trashItem 进废纸篓）都自由执行；只有**不可逆调用**（rm、git clean、git reset --hard、覆盖已有文件）逐次要用户确认——敏感性由工具按"这一次调用"判定（`confirmationRequest(arguments:cwd:)` 返回非 nil），不是按工具整体。删除的首选是 trash 不是 rm（提示语已引导）。纯 ASCII 单短词不触发 agent（多半是敲错命令），含 CJK 的输入一律视为自然语言。DeepSeek 是一等公民（OpenAI 兼容 /chat/completions + SSE + function calling），任何同协议端点即插即用。
+运行时架构抄 Pi 的设计语法（等效 Swift 实现在 `Agent/`）：ChatStreamClient 遵守"永不 throw"契约（错误编码进事件流）；AgentRuntime 是顺序工具 loop，**不设轮数上限**——模型不再要工具即自然结束，停止权在用户（Ctrl+C 断流即取消，别加回预算类硬限制）；事件类型化（AgentEvent）。工具按可恢复性分档：只读（run_command/list_dir/read_file，含网络读：curl/ping/dig/host/nslookup/whois/netstat/traceroute/git ls-remote）与可恢复变更（mv/cp/mkdir/chmod/git add·commit·fetch·pull·clone、写新文件、`trash`=原生 FileManager.trashItem 进废纸篓）都自由执行；只有**不可逆或外发调用**（rm、git clean、git reset --hard、git push、覆盖已有文件）逐次要用户确认——敏感性由工具按"这一次调用"判定（`confirmationRequest(arguments:cwd:)` 返回非 nil），不是按工具整体。删除的首选是 trash 不是 rm（提示语已引导）。纯 ASCII 单短词不触发 agent（多半是敲错命令），含 CJK 的输入一律视为自然语言。DeepSeek 是一等公民（OpenAI 兼容 /chat/completions + SSE + function calling），任何同协议端点即插即用。
 
-**确认协议（自然语言优先）**：确认内容是模型传的 `intent`（用户语言的一句"将会发生什么"，如"将永久删除 bbb.txt，此操作无法恢复"），命令本身只作为一行暗色 `→ rm bbb.txt` 审计行。流程：runtime 执行前调 RunConfig.confirm(message, command)（nil=拒绝）；AgentServer 往流里发暗色命令行 + 哨兵行 `\x01PIGEON_CONFIRM\x01<id>\x01<message>`，zsh 钩子逐行读流、认出哨兵后在 /dev/tty 上问 `⚠ <message> — allow? [y/N]`，答案 POST 回 `/confirm`（与 /ask 同一套鉴权），ConfirmationBroker 唤醒等待的 agent；120s 无应答或 Ctrl+C（连接断）都算拒绝。拒绝作为工具结果喂回模型（提示语要求它不要重试）。可变命令白名单只含本地操作（git push/pull/fetch 拒绝），依旧 argv 数组直接 exec 永不过 shell。
+**确认协议（自然语言优先）**：确认内容是模型传的 `intent`（用户语言的一句"将会发生什么"，如"将永久删除 bbb.txt，此操作无法恢复"），命令本身只作为一行暗色 `→ rm bbb.txt` 审计行。流程：runtime 执行前调 RunConfig.confirm(message, command)（nil=拒绝）；AgentServer 往流里发暗色命令行 + 哨兵行 `\x01PIGEON_CONFIRM\x01<id>\x01<message>`，zsh 钩子逐行读流、认出哨兵后在 /dev/tty 上问 `⚠ <message> — allow? [y/N]`，答案 POST 回 `/confirm`（与 /ask 同一套鉴权），ConfirmationBroker 唤醒等待的 agent；120s 无应答或 Ctrl+C（连接断）都算拒绝。拒绝作为工具结果喂回模型（提示语要求它不要重试）。可变命令支持 git 远端操作：fetch/pull/clone 自由执行（reflog 兜底可恢复，超时放宽到 300s），push 逐次确认（外发动作）；依旧 argv 数组直接 exec 永不过 shell。
 
 **安全（这两条是硬红线，别退回去）：**
 - **AgentServer 是本地 RCE 级端点，必须鉴权**。绑 127.0.0.1 不是信任边界 —— 浏览器标签页能 POST、DNS rebinding 能绕、本机其他进程能读。每个 `/ask` 请求必须：带每次启动新生成的 bearer token（`PIGEON_AGENT_TOKEN`，随端口一起注入 surface env，常量时间比较）、Host 精确等于 `127.0.0.1:<port>`/`localhost:<port>`、不带任何 Origin 头。三者缺一即 403。
-- **命令工具走 argv 数组 + 直接 Process exec，永不过 shell**。模型传 `{"pipeline":[["ls","-la"],["wc","-l"]]}`，每个元素是一个 exec 参数、逐字传递 —— 根本没有 shell 元字符/引号/注入面（黑名单过滤字符串是死路，别走回头路）。纵深防御：binary 只解析白名单里的裸名到绝对路径（`RunReadOnlyCommand.searchDirs`）；per-binary 危险 flag 拒绝（find 的 `-exec/-delete/...`、git 的 `-c/--exec-path/...`）；git 还要求子命令在只读白名单里。管道用 Swift `Pipe()` 串多个 Process，不交给 zsh。
+- **命令工具走 argv 数组 + 直接 Process exec，永不过 shell**。模型传 `{"pipeline":[["ls","-la"],["wc","-l"]]}`，每个元素是一个 exec 参数、逐字传递 —— 根本没有 shell 元字符/引号/注入面（黑名单过滤字符串是死路，别走回头路）。纵深防御：binary 只解析白名单里的裸名到绝对路径（`RunReadOnlyCommand.searchDirs`）；per-binary 危险 flag 拒绝（find 的 `-exec/-delete/...`、git 的 `-c/--exec-path/--upload-pack/--receive-pack/...`、curl 禁写本地文件/读 netrc 凭据/连 unix socket 的 flag——短选项按簇检测，`-sSo` 也拦得住）；git 还要求子命令在对应白名单里。管道用 Swift `Pipe()` 串多个 Process，不交给 zsh。
 
 **输出渲染**：助手文本经 `Agent/Render/MarkdownANSIRenderer` 流式转成 ANSI（粗体/斜体/`code` 青色/标题/列表 •/引用 ▌/围栏代码/OSC 8 链接），按行缓冲——inline 标记可能跨 chunk 但不会跨行，所以整行攒齐再渲染。系统提示允许简单 markdown（表格除外，渲染不了）。工具行等非 markdown 输出穿插前要先 flush 渲染器。
 
@@ -119,7 +129,7 @@ open build/Build/Products/Debug/Pigeon.app   # 或从 Xcode 跑
 **改 UI/交互后必须用驱动服务自测**，不要靠 AppleScript 或肉眼。app 内置一个 localhost HTTP 驱动（`Automation/DriverServer.swift`），设了 `PIGEON_DRIVER_PORT` 才启动，只绑 127.0.0.1。`scripts/pigeonctl` 是包装：
 
 ```sh
-scripts/pigeonctl launch          # 启动（走 LaunchServices + launchctl setenv 传端口）
+scripts/pigeonctl launch          # 启动 dev 实例（open --env 传驱动端口；只管 dev，不碰生产版）
 scripts/pigeonctl state           # 全部窗口的 tab 列表 + windows 数组 + resizeIncrements（JSON）
 scripts/pigeonctl new-window / select-window <windowNumber>   # 多窗口
 scripts/pigeonctl new-tab / select <id> / close <id>          # tab id 跨窗口寻址

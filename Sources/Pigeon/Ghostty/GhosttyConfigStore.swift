@@ -12,17 +12,25 @@ extension Ghostty {
     /// (an earlier HOME/XDG env swap broke non-deterministically because
     /// Foundation caches NSSearchPath results).
     enum ConfigStore {
-        /// The file users edit.
+        /// The file users edit. Per app variant: production reads
+        /// ~/.config/pigeon/config, the dev build ~/.config/pigeon-dev/config.
         static var configFileURL: URL {
-            FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(".config/pigeon/config")
+            AppVariant.configDirectoryURL.appendingPathComponent("config")
         }
 
-        /// Ghostty.app's config (XDG first, then App Support), used once
-        /// as a starting point.
-        private static var ghosttyConfigURL: URL? {
+        /// The best available starting point for a fresh config, tried in
+        /// order: for the dev variant, production Pigeon's config first
+        /// (so dev launches looking like the app in daily use); then
+        /// Ghostty.app's config (XDG first, then App Support).
+        private static var seedConfigURL: URL? {
             let fm = FileManager.default
-            let candidates = [
+            var candidates: [URL] = []
+            if AppVariant.isDev {
+                candidates.append(
+                    AppVariant.productionConfigDirectoryURL
+                        .appendingPathComponent("config"))
+            }
+            candidates += [
                 fm.homeDirectoryForCurrentUser
                     .appendingPathComponent(".config/ghostty/config"),
                 fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -46,7 +54,7 @@ extension Ghostty {
             # reads it, and Pigeon never reads Ghostty's config.
 
             """
-            if let source = ghosttyConfigURL,
+            if let source = seedConfigURL,
                let imported = try? String(contentsOf: source, encoding: .utf8) {
                 contents += """
 

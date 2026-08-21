@@ -24,14 +24,13 @@ targets:
     info:
       path: Sources/Pigeon/Info.plist
       properties:
-        CFBundleDisplayName: Pigeon
-        CFBundleName: Pigeon
+        CFBundleDisplayName: $(PIGEON_APP_NAME)
+        CFBundleName: $(PIGEON_APP_NAME)
         LSApplicationCategoryType: public.app-category.developer-tools
         NSHighResolutionCapable: true
         NSPrincipalClass: NSApplication
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.ahpx.pigeon
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         # libghostty statically links C++ dependencies (harfbuzz, etc.)
         OTHER_LDFLAGS: "-lstdc++"
@@ -44,6 +43,20 @@ targets:
         # A terminal cannot be sandboxed: it must spawn shells with full
         # user privileges (same as Ghostty, iTerm2, Terminal.app).
         ENABLE_APP_SANDBOX: false
+      configs:
+        # Debug is a separate app ("Pigeon Dev") so it runs side by side
+        # with the installed production Pigeon: its own bundle ID (own
+        # UserDefaults, own LaunchServices identity — `open` starts a
+        # second instance instead of activating prod), its own config dir
+        # (~/.config/pigeon-dev, derived from the bundle ID suffix in
+        # AppVariant.swift), and a DEV-badged icon.
+        Debug:
+          PRODUCT_BUNDLE_IDENTIFIER: dev.ahpx.pigeon.dev
+          PIGEON_APP_NAME: Pigeon Dev
+          ASSETCATALOG_COMPILER_APPICON_NAME: AppIconDev
+        Release:
+          PRODUCT_BUNDLE_IDENTIFIER: dev.ahpx.pigeon
+          PIGEON_APP_NAME: Pigeon
     postBuildScripts:
       # libghostty locates its runtime resources (terminfo, shell
       # integration) at Contents/Resources/{ghostty,terminfo} relative to

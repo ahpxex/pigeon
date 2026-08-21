@@ -305,7 +305,7 @@
     ]
   },
   {
-    "name": "round-budget-exhausted",
+    "name": "no-round-cap",
     "prompt": "eval round budget",
     "turns": [
       {
@@ -367,17 +367,47 @@
             }
           }
         ]
+      },
+      {
+        "tool_calls": [
+          {
+            "name": "list_dir",
+            "arguments": {
+              "path": "."
+            }
+          }
+        ]
+      },
+      {
+        "tool_calls": [
+          {
+            "name": "list_dir",
+            "arguments": {
+              "path": "."
+            }
+          }
+        ]
+      },
+      {
+        "text": "eight rounds done\n"
       }
     ],
     "expect": [
       {
         "type": "count",
         "value": "⏺",
-        "n": 6
+        "n": 8
       },
       {
         "type": "contains",
+        "value": "eight rounds done"
+      },
+      {
+        "type": "not_contains",
         "value": "round budget"
+      },
+      {
+        "type": "no_error"
       }
     ]
   },
@@ -612,7 +642,7 @@
     ]
   },
   {
-    "name": "git-push-rejected-even-if-confirmed",
+    "name": "git-push-asks-confirmation",
     "prompt": "eval mutating git push",
     "fixture": {},
     "confirm": "allow",
@@ -629,23 +659,28 @@
                   "origin",
                   "main"
                 ]
-              ]
+              ],
+              "intent": "将推送 main 分支到远端 origin"
             }
           }
         ]
       },
       {
-        "text": "cannot push\n"
+        "text": "push attempted\n"
       }
     ],
     "expect": [
       {
         "type": "contains",
+        "value": "[confirm-request] 将推送 main 分支到远端 origin"
+      },
+      {
+        "type": "not_contains",
         "value": "not a local mutating subcommand"
       },
       {
         "type": "contains",
-        "value": "cannot push"
+        "value": "push attempted"
       }
     ]
   },
@@ -693,6 +728,111 @@
       {
         "type": "contains",
         "value": "user_count=1"
+      }
+    ]
+  },
+  {
+    "name": "git-push-confirm-deny",
+    "prompt": "eval deny git push",
+    "fixture": {},
+    "confirm": "deny",
+    "turns": [
+      {
+        "tool_calls": [
+          {
+            "name": "run_mutating_command",
+            "arguments": {
+              "pipeline": [
+                [
+                  "git",
+                  "push",
+                  "origin",
+                  "main"
+                ]
+              ],
+              "intent": "将推送 main 分支到远端 origin"
+            }
+          }
+        ]
+      },
+      {
+        "text": "okay, not pushing\n"
+      }
+    ],
+    "expect": [
+      {
+        "type": "contains",
+        "value": "[confirm-request] 将推送 main 分支到远端 origin"
+      },
+      {
+        "type": "contains",
+        "value": "declined"
+      },
+      {
+        "type": "contains",
+        "value": "okay, not pushing"
+      }
+    ]
+  },
+  {
+    "name": "curl-local-write-rejected",
+    "prompt": "eval curl write flags",
+    "fixture": {},
+    "turns": [
+      {
+        "tool_calls": [
+          {
+            "name": "run_command",
+            "arguments": {
+              "pipeline": [
+                [
+                  "curl",
+                  "--output",
+                  "x.txt",
+                  "http://127.0.0.1:1/"
+                ]
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "tool_calls": [
+          {
+            "name": "run_command",
+            "arguments": {
+              "pipeline": [
+                [
+                  "curl",
+                  "-sSo",
+                  "x.txt",
+                  "http://127.0.0.1:1/"
+                ]
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "text": "cannot write files with curl\n"
+      }
+    ],
+    "expect": [
+      {
+        "type": "contains",
+        "value": "'--output' is not allowed for curl"
+      },
+      {
+        "type": "contains",
+        "value": "'-sSo' carries a flag not allowed for curl"
+      },
+      {
+        "type": "fixture_missing",
+        "value": "x.txt"
+      },
+      {
+        "type": "contains",
+        "value": "cannot write files with curl"
       }
     ]
   }
