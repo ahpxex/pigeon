@@ -28,6 +28,11 @@ final class TerminalTab: Identifiable, ObservableObject {
     /// Maintained by TabActivityMonitor.
     @Published var isBusy = false
 
+    /// Work finished while the user was looking elsewhere — a dot at
+    /// the end of the sidebar label until the tab is viewed again.
+    /// Maintained by TabActivityMonitor.
+    @Published var hasUnread = false
+
     /// Scrollback search state (cmd+F), one per tab.
     @MainActor let search = TerminalSearchModel()
 

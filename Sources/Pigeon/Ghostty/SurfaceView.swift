@@ -169,6 +169,9 @@ extension Ghostty {
         ) {
             guard let surface else { return }
             lastUserInputAt = Date()
+            if keyCode == 36, mods == GHOSTTY_MODS_NONE {
+                NotificationCenter.default.post(name: .pigeonSurfaceDidSubmit, object: self)
+            }
             var key = ghostty_input_key_s()
             key.keycode = keyCode
             key.mods = mods
@@ -443,6 +446,13 @@ extension Ghostty {
                 return
             }
             lastUserInputAt = Date()
+            // Bare Enter (Return or keypad Enter, no modifiers) reads as
+            // "submitted" — shift+Enter is a newline in TUIs like Claude
+            // Code and must not light the spinner while composing.
+            if event.keyCode == 36 || event.keyCode == 76,
+               event.modifierFlags.intersection([.shift, .control, .option, .command]).isEmpty {
+                NotificationCenter.default.post(name: .pigeonSurfaceDidSubmit, object: self)
+            }
 
             // Run the event through the input method stack first. Plain
             // keys produce text via insertText, IME sequences produce

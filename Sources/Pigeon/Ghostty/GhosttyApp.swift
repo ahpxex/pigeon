@@ -10,6 +10,10 @@ extension Notification.Name {
     static let pigeonNewTab = Notification.Name("pigeonNewTab")
     /// Request closing the tab that owns the SurfaceView in object.
     static let pigeonCloseTab = Notification.Name("pigeonCloseTab")
+    /// The user pressed bare Enter in the SurfaceView in object —
+    /// treated as "submitted something" by the activity monitor, which
+    /// lights the tab's busy spinner immediately.
+    static let pigeonSurfaceDidSubmit = Notification.Name("pigeonSurfaceDidSubmit")
     /// Switch tabs. Object is the originating SurfaceView, userInfo["goto"]
     /// is a ghostty_action_goto_tab_e raw value.
     static let pigeonGotoTab = Notification.Name("pigeonGotoTab")

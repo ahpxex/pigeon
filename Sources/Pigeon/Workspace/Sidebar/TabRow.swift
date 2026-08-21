@@ -78,6 +78,14 @@ struct TabRow: View {
                     .help(surfaceView.pwd ?? surfaceView.title)
             }
 
+            if tabState.hasUnread && !tabState.isBusy && !renaming {
+                // Work finished while the user was elsewhere.
+                Circle()
+                    .fill(.tint)
+                    .frame(width: 6, height: 6)
+                    .accessibilityLabel("unread")
+            }
+
             if let shortcutNumber {
                 Text("⌘\(shortcutNumber)")
                     .font(.system(size: 10, weight: .medium).monospacedDigit())
