@@ -297,6 +297,15 @@ final class DriverServer {
             tab.customTitle = title.isEmpty ? nil : title
             return HTTPResponse(json: ["ok": true])
 
+        case ("POST", "/tabs/summarize"):
+            guard let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any],
+                  let id = json["id"] as? String,
+                  let (_, tab) = locateTab(id: id)
+            else { return HTTPResponse(status: 400, error: "need {id}") }
+            tab.customTitle = nil
+            TabTitleSummarizer.shared.summarize(tab)
+            return HTTPResponse(json: ["ok": true])
+
         case ("POST", "/tabs/icon"):
             guard let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any],
                   let id = json["id"] as? String,
@@ -575,6 +584,9 @@ final class DriverServer {
             if json.keys.contains("accentHex") {
                 settings.accentHex = json["accentHex"] as? String
             }
+            if let enabled = json["aiTabTitles"] as? Bool {
+                settings.aiTabTitles = enabled
+            }
             return HTTPResponse(json: settingsJSON())
 
         default:
@@ -619,6 +631,7 @@ final class DriverServer {
             "iconCategory": settings.iconCategory as Any,
             "appearance": settings.appearance.rawValue,
             "accentHex": settings.accentHex as Any,
+            "aiTabTitles": settings.aiTabTitles,
         ]
     }
 

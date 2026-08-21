@@ -26,6 +26,13 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(labelStyle.rawValue, forKey: "labelStyle") }
     }
 
+    /// Name each tab once with an AI summary of its activity, triggered
+    /// when the terminal has produced enough output (TabTitleSummarizer).
+    /// The right-click "Summarize Title" action works regardless.
+    @Published var aiTabTitles: Bool {
+        didSet { defaults.set(aiTabTitles, forKey: "aiTabTitles") }
+    }
+
     /// OpenMoji category new tabs draw random icons from; nil = all.
     @Published var iconCategory: String? {
         didSet { defaults.set(iconCategory, forKey: "iconCategory") }
@@ -53,6 +60,7 @@ final class AppSettings: ObservableObject {
 
     private init() {
         labelStyle = LabelStyle(rawValue: defaults.string(forKey: "labelStyle") ?? "") ?? .folderName
+        aiTabTitles = defaults.bool(forKey: "aiTabTitles")
         iconCategory = defaults.string(forKey: "iconCategory")
         appearance = Appearance(rawValue: defaults.string(forKey: "appearance") ?? "") ?? .system
         accentHex = defaults.string(forKey: "accentHex")

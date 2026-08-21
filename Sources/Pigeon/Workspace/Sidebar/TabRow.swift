@@ -102,9 +102,15 @@ struct TabRow: View {
         .onHover { hovering = $0 }
         .contextMenu {
             Button("Rename") { startRename() }
-            if tabState.customTitle != nil {
+            Button("Summarize Title") {
+                // The user asked; a rename no longer stands in the way.
+                tabState.customTitle = nil
+                TabTitleSummarizer.shared.summarize(tab)
+            }
+            if tabState.customTitle != nil || tabState.aiTitle != nil {
                 Button("Use Default Title") {
                     tabState.customTitle = nil
+                    tabState.aiTitle = nil
                 }
             }
             Button("Change Icon…") { showingIconPicker = true }

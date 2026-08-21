@@ -11,6 +11,12 @@ final class TerminalTab: Identifiable, ObservableObject {
     /// User-assigned name. When set it wins over the shell-reported title.
     @Published var customTitle: String?
 
+    /// Model-generated summary of what's happening in this terminal
+    /// (TabTitleSummarizer): set once automatically when the terminal
+    /// gets busy (if enabled), or on demand from the tab's context
+    /// menu. A user rename still wins.
+    @Published var aiTitle: String?
+
     /// OpenMoji code shown in the sidebar; random at birth, user-pickable.
     @Published var iconCode: String = TabIcon.random()
 
@@ -26,10 +32,12 @@ final class TerminalTab: Identifiable, ObservableObject {
         self.surfaceView = view
     }
 
-    /// Sidebar label: custom name > working directory > shell title.
+    /// Sidebar label: custom name > AI summary > working directory >
+    /// shell title.
     @MainActor
     var displayTitle: String {
         if let customTitle { return customTitle }
+        if let aiTitle { return aiTitle }
         if let pwd = surfaceView.pwd {
             switch AppSettings.shared.labelStyle {
             case .folderName: return Self.folderLabel(pwd)

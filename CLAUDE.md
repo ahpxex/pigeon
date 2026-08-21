@@ -122,7 +122,9 @@ Debug 构建是独立的 app "**Pigeon Dev**"，与安装在 /Applications 的�
 
 **Eval**（`evals/`，改 agent 相关代码后必须跑）：独立 SwiftPM 包（进程内 mock LLM，无子进程），入口 `scripts/eval`（固定 /usr/bin/swift —— PATH 里 swiftly 的 toolchain 与系统 SDK 不兼容）。走真实 `/ask` 链路跑确定性回归（渲染、工具循环、确认协议、对话记忆、拒绝逻辑）+ 安全预检（/ask 和 /confirm 对无 token/错 token/Origin/坏 Host 必须 403）；`--suite evals/cases/live.json --live --provider DeepSeek` 跑真实 Provider 质量套件。⚠️ eval 客户端读流不能用 URLSession（AsyncBytes 有缓冲，确认哨兵会卡死在缓冲里），用的是裸 NWConnection + 手动 chunked 解码。详见 evals/README.md。
 
-已知改进点：语言一致性 eval 需要 LLM judge；确认应答目前只有 y/N 两态（没有"本次会话总是允许"）；`intent` 缺失时确认文案回落到 "Run: <argv>"（英文）。
+**AI tab 标题**（`Agent/TabTitleSummarizer.swift`）：把终端屏幕尾部（40 行/4KB）发给已配置的 Provider 模型，生成 ≤4 词/12 字的标题写进 `TerminalTab.aiTitle`。为跑 coding agent 的 tab 而生：目录名区分不了三个都在 `~/Code/x` 里的 Claude Code。**刻意不做 API 轮询**，只有两个触发点：(1) 自动一次——General 设置的 "AI tab titles" 开关打开时，5s 本地 tick（只读屏幕，零网络）检测到某 tab 可见内容首次 ≥1000 字符（阈值=新 prompt+banner 不会触发、真实活动很快越过），对它调用一次模型，此后不再自动重总结（`autoDone` 在请求发出时就置位，失败也不会变成重试循环）；(2) 手动——tab 右键 "Summarize Title"（driver 对应 `/tabs/summarize`、`pigeonctl summarize <id>`），随时可刷新，3s 防抖，手动会先清掉 customTitle（用户点了就是要新的）。显示优先级 customTitle > aiTitle > 目录名/shell 标题（与标签风格正交，任何风格下都生效）；右键 "Use Default Title" 同时清 custom 和 AI 标题。prompt 要求沿用上次标题、按屏幕主导语言输出、把屏幕内容当数据防注入；输出过 `sanitize`（取首行、剥引号、折叠空白、40 字上限按词边界截断）。复用 agent 的 Provider/key/model（AgentSettings），无独立配置。
+
+已知改进点：语言一致性 eval 需要 LLM judge；确认应答目前只有 y/N 两态（没有"本次会话总是允许"）；`intent` 缺失时确认文案回落到 "Run: <argv>"（英文）；AI 标题的阈值/模型不可单独配置（跟随 agent 的 Provider 选择）。
 
 ## 自动化测试（驱动服务）
 
@@ -138,6 +140,7 @@ scripts/pigeonctl key enter|escape|tab|up|down|ctrl-c|cmd-w|...  # cmd-x 走 gho
 scripts/pigeonctl text            # 读回整屏文本 —— 断言用这个
 scripts/pigeonctl sidebar [show|hide|<width>]  # 侧边栏状态/折叠/宽度
 scripts/pigeonctl move <id> <index> / rename <id> <名字>  # 排序、重命名（空名字恢复 shell 标题）
+scripts/pigeonctl summarize <id>  # AI 总结该 tab 的标题（同右键 Summarize Title）
 scripts/pigeonctl icon <id> <code> / group-new <名字> / group-assign <tabid> <groupid|none> / group-expand <id> <true|false>
 scripts/pigeonctl（另有 /agent/provider 端点配置 Provider+key，测试 agent 用 mock LLM：见 git 历史里的 mock_llm.py 模式）
 scripts/pigeonctl search 'term'   # 打开搜索并查询；search next|prev|close 导航/关闭；无参读状态（count/index/current rect/visible rects）
@@ -170,7 +173,7 @@ scripts/pigeonctl quit
 - 关窗确认只显示一句话，不列出具体在跑的进程名（Ghostty 会列）
 - WindowGroup 场景恢复会还原上次的窗口数量，但每个窗口都是全新 shell（不恢复 cwd/tab 布局）
 
-已有设置界面（⌘, 打开，SwiftUI Settings scene 分四个 Tab）：General（标签风格、图标分类，`AppSettings`）、Appearance（系统/亮/暗、主题色）、Terminal（内核 GUI 设置：字体=系统等宽字体枚举 Picker、字号滑杆、9 个内置主题卡片（One Dark/GitHub/Solarized/Dracula/Nord/Tokyo Night/Monokai，写完整 16 色 palette）、Match system appearance 开关=亮/暗各选一个主题跟随系统外观自动切换（AppDelegate KVO `NSApp.effectiveAppearance` → 重写托管块+热重载，同时 `ghostty_app/surface_set_color_scheme` 上报内核供 OSC 查询；surface 级观察在 SurfaceView init）、光标、不透明度；`KernelSettings` 写进配置文件末尾的 pigeon-settings 托管块并热重载，块外内容留给手改且被托管块覆盖）、Agent（AI Provider 管理：顶部 Picker 选 Provider（选中即默认），下方只显示选中者的配置——内置 Anthropic/OpenAI/DeepSeek + 自定义 Provider（URL+模型+key），模型列表不硬编码——key 填好后自动从 /models 端点拉取（改 key/URL 防抖重拉，手动刷新保留），拉到的列表持久化当缓存，API key 每个 Provider 单独存 `~/.config/pigeon/credentials.json`，`AgentSettings`）、Advanced（配置文件路径/打开/重载）。程序化打开设置窗口必须走 SwiftUI openSettings 环境动作（`SettingsOpener` 桥接 + `.pigeonOpenSettings` 通知）—— showSettingsWindow: 等老 selector 在 macOS 26 上已失效；cmd+, 在 performKeyEquivalent 里明确不给 ghostty（它默认绑成 open_config）。
+已有设置界面（⌘, 打开，SwiftUI Settings scene 分四个 Tab）：General（标签风格、AI tab titles 开关、图标分类，`AppSettings`）、Appearance（系统/亮/暗、主题色）、Terminal（内核 GUI 设置：字体=系统等宽字体枚举 Picker、字号滑杆、9 个内置主题卡片（One Dark/GitHub/Solarized/Dracula/Nord/Tokyo Night/Monokai，写完整 16 色 palette）、Match system appearance 开关=亮/暗各选一个主题跟随系统外观自动切换（AppDelegate KVO `NSApp.effectiveAppearance` → 重写托管块+热重载，同时 `ghostty_app/surface_set_color_scheme` 上报内核供 OSC 查询；surface 级观察在 SurfaceView init）、光标、不透明度；`KernelSettings` 写进配置文件末尾的 pigeon-settings 托管块并热重载，块外内容留给手改且被托管块覆盖）、Agent（AI Provider 管理：顶部 Picker 选 Provider（选中即默认），下方只显示选中者的配置——内置 Anthropic/OpenAI/DeepSeek + 自定义 Provider（URL+模型+key），模型列表不硬编码——key 填好后自动从 /models 端点拉取（改 key/URL 防抖重拉，手动刷新保留），拉到的列表持久化当缓存，API key 每个 Provider 单独存 `~/.config/pigeon/credentials.json`，`AgentSettings`）、Advanced（配置文件路径/打开/重载）。程序化打开设置窗口必须走 SwiftUI openSettings 环境动作（`SettingsOpener` 桥接 + `.pigeonOpenSettings` 通知）—— showSettingsWindow: 等老 selector 在 macOS 26 上已失效；cmd+, 在 performKeyEquivalent 里明确不给 ghostty（它默认绑成 open_config）。
 
 **多窗口**（已实现）：`WindowGroup(id:"main")`，每窗口一个 `TabManager` 实例（`TerminalWorkspace` 的 @StateObject），静态弱引用 registry（`TabManager.all` / `forKeyWindow` / `manager(owning:)`）。ghostty action 通知广播给所有 manager，各自按"surface 归属"过滤（menu 的 nil-object 请求由 key window 的 manager 接）；`forKeyWindow` 在 app 未激活时（driver 的 curl 请求）回退 `NSApp.orderedWindows` 前后顺序。新窗口：⌘N 菜单直接 openWindow；ghostty NEW_WINDOW action → `.pigeonNewWindow` 通知（带 UUID）→ 每窗口一个 NewWindowBridge，静态 claim 集合保证只开一个。`WindowBridge` 的 attach 必须走 NSView 子类的 `viewDidMoveToWindow`（makeNSView 里 async 抓 window 对新开窗口不可靠，会漏装 delegate）。侧边栏状态 `WorkspaceState` 每窗口一份，持久化键共享（后写胜出）。
 
