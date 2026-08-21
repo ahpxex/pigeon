@@ -7,9 +7,13 @@ import Foundation
 ///
 /// Deliberately NOT a polling loop against the API — two triggers only:
 /// - **Once, automatically** (if enabled in General settings): when a
-///   terminal's visible output first crosses a size threshold, i.e. it
-///   has done enough to be summarizable. Checking the screen is a local
-///   read and free; the model is called a single time per tab.
+///   real work session has happened — the user interacted with the
+///   terminal and the tool then produced sustained output on its own
+///   (TabActivityMonitor's work log). A raw size threshold doesn't
+///   work here: TUIs like Claude Code and Codex paint a full screen
+///   the moment they launch, before the user has asked for anything.
+///   The summary fires when the work settles, or mid-flight once the
+///   tool has been at it long enough to show what it's doing.
 /// - **On demand**: the tab's context-menu "Summarize Title" (also the
 ///   driver's /tabs/summarize), any number of times.
 ///
@@ -19,12 +23,18 @@ final class TabTitleSummarizer {
     static let shared = TabTitleSummarizer()
 
     /// How often tabs are checked (locally, no network) for the
-    /// auto-summarize threshold.
+    /// auto-summarize condition.
     private static let tickInterval: TimeInterval = 5
-    /// A tab qualifies for its one automatic summary once its visible
-    /// tail holds this many characters — a fresh prompt plus banner
-    /// stays well below, real activity crosses it quickly.
-    private static let autoThreshold = 1_000
+    /// A work session counts once the tool has produced this many
+    /// seconds of spontaneous output after user input — filters out
+    /// prompt echo and instant commands like `ls`.
+    private static let minWorkSeconds = 3
+    /// …and the summary fires when the screen has then been quiet this
+    /// long (the task finished or paused, content shows the outcome)…
+    private static let settleSeconds: TimeInterval = 4
+    /// …or immediately once this much sustained work has accumulated —
+    /// a long-running agent shouldn't keep its tab unnamed for minutes.
+    private static let longWorkSeconds = 15
     /// Debounce for the manual action (double-clicked menu items).
     private static let manualDebounce: TimeInterval = 3
 
@@ -72,10 +82,14 @@ final class TabTitleSummarizer {
             var state = states[tab.id] ?? TabState()
             guard !state.autoDone, !state.inFlight,
                   // A rename means the user already named it better.
-                  tab.customTitle == nil
+                  tab.customTitle == nil,
+                  let activity = TabActivityMonitor.shared.activity(for: tab.id),
+                  activity.workSeconds >= Self.minWorkSeconds,
+                  activity.workSeconds >= Self.longWorkSeconds
+                    || Date().timeIntervalSince(activity.lastChangeAt) >= Self.settleSeconds
             else { continue }
             let content = Self.screenTail(of: tab)
-            guard content.count >= Self.autoThreshold else { continue }
+            guard !content.isEmpty else { continue }
             state.autoDone = true
             request(tab, content: content, state: state)
         }

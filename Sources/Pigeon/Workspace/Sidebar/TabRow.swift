@@ -40,7 +40,13 @@ struct TabRow: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            if let icon = TabIcon.image(for: tabState.iconCode) {
+            if tabState.isBusy {
+                // The terminal is producing output on its own (build,
+                // coding agent working): spinner in place of the icon.
+                ProgressView()
+                    .controlSize(.small)
+                    .frame(width: 16, height: 16)
+            } else if let icon = TabIcon.image(for: tabState.iconCode) {
                 Image(nsImage: icon)
                     .resizable()
                     .interpolation(.high)

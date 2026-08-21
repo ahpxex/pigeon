@@ -141,12 +141,18 @@ extension Ghostty {
             return ghostty_surface_needs_confirm_quit(surface)
         }
 
+        /// When the user last typed into this terminal (driver input
+        /// counts too, so tests exercise the same paths). Activity
+        /// tracking uses it to tell tool output from typing echo.
+        private(set) var lastUserInputAt: Date?
+
         // MARK: Programmatic access (driver / tests)
 
         /// Send raw text to the pty as if typed. Control characters pass
         /// through (e.g. "\u{03}" for ctrl-c, "\r" for enter).
         func sendText(_ text: String) {
             guard let surface else { return }
+            lastUserInputAt = Date()
             text.withCString { cString in
                 ghostty_surface_text(surface, cString, UInt(strlen(cString)))
             }
@@ -162,6 +168,7 @@ extension Ghostty {
             mods: ghostty_input_mods_e = GHOSTTY_MODS_NONE
         ) {
             guard let surface else { return }
+            lastUserInputAt = Date()
             var key = ghostty_input_key_s()
             key.keycode = keyCode
             key.mods = mods
@@ -183,6 +190,28 @@ extension Ghostty {
             key.action = GHOSTTY_ACTION_RELEASE
             key.text = nil
             _ = ghostty_surface_key(surface, key)
+        }
+
+        /// The visible viewport only, as plain text. Cheap enough to
+        /// sample every second — screenText() walks the whole
+        /// scrollback, this reads one screenful.
+        func viewportText() -> String {
+            guard let surface else { return "" }
+            var text = ghostty_text_s()
+            let selection = ghostty_selection_s(
+                top_left: ghostty_point_s(
+                    tag: GHOSTTY_POINT_VIEWPORT,
+                    coord: GHOSTTY_POINT_COORD_TOP_LEFT,
+                    x: 0, y: 0),
+                bottom_right: ghostty_point_s(
+                    tag: GHOSTTY_POINT_VIEWPORT,
+                    coord: GHOSTTY_POINT_COORD_BOTTOM_RIGHT,
+                    x: 0, y: 0),
+                rectangle: false)
+            guard ghostty_surface_read_text(surface, selection, &text) else { return "" }
+            defer { ghostty_surface_free_text(surface, &text) }
+            guard let ptr = text.text else { return "" }
+            return String(cString: ptr)
         }
 
         /// The full screen contents (scrollback + viewport) as plain text.
@@ -413,6 +442,7 @@ extension Ghostty {
                 super.keyDown(with: event)
                 return
             }
+            lastUserInputAt = Date()
 
             // Run the event through the input method stack first. Plain
             // keys produce text via insertText, IME sequences produce
@@ -491,6 +521,7 @@ extension Ghostty {
 
             let key = event.ghosttyKeyEvent(GHOSTTY_ACTION_PRESS)
             guard ghostty_surface_key_is_binding(surface, key) else { return false }
+            lastUserInputAt = Date()
             _ = ghostty_surface_key(surface, key)
             return true
         }

@@ -23,6 +23,11 @@ final class TerminalTab: Identifiable, ObservableObject {
     /// Sidebar group membership; nil = top level.
     @Published var groupID: TabGroup.ID?
 
+    /// The terminal is producing output on its own (a build, a coding
+    /// agent working, …) — the sidebar swaps the icon for a spinner.
+    /// Maintained by TabActivityMonitor.
+    @Published var isBusy = false
+
     /// Scrollback search state (cmd+F), one per tab.
     @MainActor let search = TerminalSearchModel()
 

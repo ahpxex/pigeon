@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         AppSettings.shared.applyAppearance()
         AgentServer.shared.start()
+        TabActivityMonitor.shared.start()
         TabTitleSummarizer.shared.start()
         DriverServer.shared.startIfConfigured()
 

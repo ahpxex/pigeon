@@ -207,6 +207,7 @@ final class DriverServer {
                     tabsJSON.append([
                         "id": tab.id.uuidString,
                         "title": tab.displayTitle,
+                        "busy": tab.isBusy,
                         "shellTitle": tab.surfaceView.title,
                         "pwd": tab.surfaceView.pwd as Any,
                         "selected": tab.id == m.selectedTabID,
