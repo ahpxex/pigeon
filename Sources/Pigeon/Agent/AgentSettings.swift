@@ -60,6 +60,13 @@ final class AgentSettings: ObservableObject {
             models: [],
             selectedModel: "",
             isBuiltin: true),
+        AgentProvider(
+            id: UUID(uuidString: "6A1F26F1-0004-4B69-9E30-2D2B9A6E0004")!,
+            name: "OpenRouter",
+            baseURL: "https://openrouter.ai/api/v1",
+            models: [],
+            selectedModel: "",
+            isBuiltin: true),
     ]
 
     private init() {

@@ -66,8 +66,9 @@ final class AppSettings: ObservableObject {
 
     private init() {
         labelStyle = LabelStyle(rawValue: defaults.string(forKey: "labelStyle") ?? "") ?? .folderName
-        aiTabTitles = defaults.bool(forKey: "aiTabTitles")
-        // Default on: distinct from bool(forKey:), which defaults to false.
+        // Both default on: distinct from bool(forKey:), which defaults
+        // to false.
+        aiTabTitles = defaults.object(forKey: "aiTabTitles") as? Bool ?? true
         autoGroupByFolder = defaults.object(forKey: "autoGroupByFolder") as? Bool ?? true
         iconCategory = defaults.string(forKey: "iconCategory")
         appearance = Appearance(rawValue: defaults.string(forKey: "appearance") ?? "") ?? .system
