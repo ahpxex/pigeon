@@ -529,6 +529,18 @@ extension Ghostty {
                 return false
             }
 
+            // cmd+` and cmd+K open the command palette from the terminal
+            // surface. The menu owns ⌘K; ⌘` is intercepted here because
+            // the system otherwise consumes it as "next window".
+            if event.modifierFlags.contains(.command),
+               event.modifierFlags.intersection(
+                   [.shift, .control, .option]).isEmpty,
+               let chars = event.charactersIgnoringModifiers,
+               chars == "`" || chars == "k" || chars == "K" {
+                NotificationCenter.default.post(name: .pigeonOpenPalette, object: self)
+                return true
+            }
+
             let key = event.ghosttyKeyEvent(GHOSTTY_ACTION_PRESS)
             guard ghostty_surface_key_is_binding(surface, key) else { return false }
             lastUserInputAt = Date()

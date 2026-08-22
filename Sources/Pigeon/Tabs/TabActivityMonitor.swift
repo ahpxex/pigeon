@@ -61,6 +61,15 @@ final class TabActivityMonitor {
         /// a prompt. Plain shell commands — instant or long — never
         /// spin.
         fileprivate var inTUISession = false
+        /// A coding agent on this surface reported activity via hooks
+        /// (Claude Code / Codex / pi, see ActivityHooks): busy/idle
+        /// events are authoritative, and heuristic ignition (Enter +
+        /// viewport churn) is suppressed from here on — scrolling and
+        /// resizes must not light the spinner. Sticky for the tab's
+        /// lifetime; the sampling-based *extinguish* paths stay armed
+        /// so a lost idle event (crashed agent, killed hook) still
+        /// clears the spinner.
+        fileprivate var hooksPresent = false
     }
 
     /// How many submit snapshots to keep per tab, and their size.
@@ -88,6 +97,40 @@ final class TabActivityMonitor {
 
     func activity(for tabID: UUID) -> Activity? {
         activities[tabID]
+    }
+
+    /// A hook/extension inside a coding agent (Claude Code, Codex, pi)
+    /// reported run state for a surface. "busy"/"idle" are the
+    /// authoritative spinner transitions; "ping" (SessionStart-class
+    /// events) only marks the surface as hook-driven so the sampling
+    /// heuristics stop guessing for it.
+    func handleHookActivity(surfaceID: String, event: String) {
+        guard let pair = TabManager.all
+            .flatMap({ manager in manager.tabs.map { (manager, $0) } })
+            .first(where: { $0.1.surfaceView.agentSurfaceID == surfaceID })
+        else { return }
+        let (manager, tab) = pair
+        var activity = activities[tab.id] ?? Activity()
+        activity.hooksPresent = true
+
+        switch event {
+        case "busy":
+            // Hook events outrank the pre-Enter probe: the agent may
+            // report work from states needsConfirmQuit can't see
+            // (queued prompts, auto-continues). Keep inTUISession
+            // armed so the prompt-return extinguish path still works.
+            activity.inTUISession = true
+            activities[tab.id] = activity
+            if !tab.isBusy { tab.isBusy = true }
+        case "idle":
+            activities[tab.id] = activity
+            if tab.isBusy {
+                tab.isBusy = false
+                if !isViewed(tab, in: manager) { tab.hasUnread = true }
+            }
+        default: // "ping" — presence marker only
+            activities[tab.id] = activity
+        }
     }
 
     @objc private func surfaceDidSubmit(_ notification: Notification) {
@@ -124,7 +167,11 @@ final class TabActivityMonitor {
         }
 
         activities[tab.id] = activity
-        if activity.inTUISession, !tab.isBusy { tab.isBusy = true }
+        // Hook-equipped agents light the spinner themselves (a busy
+        // event is on its way); Enter here may be an empty prompt or a
+        // confirmation dialog that starts no agent run, so guessing
+        // would just re-create the false-positive this whole path fixes.
+        if activity.inTUISession, !activity.hooksPresent, !tab.isBusy { tab.isBusy = true }
     }
 
     /// The user is looking at this tab right now: it is selected in a
@@ -164,6 +211,7 @@ final class TabActivityMonitor {
                     // spinner. Only within a TUI session — output from
                     // anything else (builds, logs) never spins.
                     if !tab.isBusy, activity.inTUISession,
+                       !activity.hooksPresent,
                        activity.consecutiveSpontaneous >= 2 {
                         tab.isBusy = true
                     }

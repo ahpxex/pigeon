@@ -55,6 +55,9 @@ private struct WorkspaceLayout: View {
     @ObservedObject var tabManager: TabManager
     @ObservedObject var workspace: WorkspaceState
 
+    @State private var paletteOpen = false
+    @State private var browserURL: URL?
+
     var body: some View {
         HStack(spacing: 0) {
             if !workspace.sidebarCollapsed {
@@ -122,8 +125,44 @@ private struct WorkspaceLayout: View {
         .background(ghostty.backgroundColor.opacity(ghostty.backgroundOpacity))
         .background(WindowTransparencyConfigurator(opacity: ghostty.backgroundOpacity))
         .background(WindowBridge(tabManager: tabManager))
+        .overlay {
+            if paletteOpen {
+                PaletteOverlay(tabManager: tabManager, isPresented: $paletteOpen)
+            }
+        }
+        .sheet(isPresented: Binding(
+            get: { browserURL != nil },
+            set: { if !$0 { browserURL = nil } })) {
+            if let url = browserURL {
+                FileBrowser(rootURL: url)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .pigeonOpenPalette)) { _ in
+            paletteOpen.toggle()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .pigeonOpenFileBrowser)) { note in
+            browserURL = note.userInfo?["url"] as? URL
+        }
         .ignoresSafeArea()
         .frame(minWidth: 400, minHeight: 300)
+    }
+}
+
+/// The palette floating over a dimmed workspace: click outside (or
+/// escape) dismisses it.
+private struct PaletteOverlay: View {
+    @ObservedObject var tabManager: TabManager
+    @Binding var isPresented: Bool
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.28)
+                .ignoresSafeArea()
+                .onTapGesture { isPresented = false }
+            CommandPalette(tabManager: tabManager, onClose: { isPresented = false })
+                .padding(.top, 90)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        }
     }
 }
 

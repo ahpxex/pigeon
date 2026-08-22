@@ -49,6 +49,16 @@ private struct PigeonCommands: Commands {
             }
             .keyboardShortcut("f", modifiers: .command)
         }
+        CommandGroup(after: .textEditing) {
+            // cmd+K and cmd+` both open the command palette. With a
+            // focused terminal surface, cmd+` never reaches the menu
+            // (ghostty doesn't bind it, AppKit gives it to the view),
+            // so the surface layer also posts the notification directly.
+            Button("Command Palette") {
+                NotificationCenter.default.post(name: .pigeonOpenPalette, object: nil)
+            }
+            .keyboardShortcut("k", modifiers: .command)
+        }
         CommandGroup(after: .sidebar) {
             Button("Toggle Sidebar") {
                 Task { @MainActor in

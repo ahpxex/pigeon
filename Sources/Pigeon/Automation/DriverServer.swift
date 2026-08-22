@@ -215,6 +215,7 @@ final class DriverServer {
                         "icon": tab.iconCode,
                         "groupId": tab.groupID?.uuidString as Any,
                         "windowNumber": m.window?.windowNumber ?? -1,
+                        "surface": tab.surfaceView.agentSurfaceID,
                     ])
                 }
             }
@@ -279,6 +280,18 @@ final class DriverServer {
             }
             // Driver closes never prompt — tests need determinism.
             owner.close(tab, confirmIfNeeded: false)
+            return HTTPResponse(json: ["ok": true])
+
+        case ("POST", "/tabs/activity"):
+            // Simulate a coding-agent activity hook (same code path the
+            // agent server's /activity endpoint uses) without needing
+            // the per-launch token.
+            guard let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any],
+                  let surface = json["surface"] as? String,
+                  let event = json["event"] as? String,
+                  ["busy", "idle", "ping"].contains(event)
+            else { return HTTPResponse(status: 400, error: "need {surface, event}") }
+            TabActivityMonitor.shared.handleHookActivity(surfaceID: surface, event: event)
             return HTTPResponse(json: ["ok": true])
 
         case ("POST", "/tabs/move"):
@@ -367,6 +380,29 @@ final class DriverServer {
                 return HTTPResponse(status: 400, error: "unknown key: \(name)")
             }
             return HTTPResponse(json: ["ok": true])
+
+        case ("GET", "/activity-hooks/state"):
+            var status: [String: Bool] = ["reporter": ActivityHooks.isReporterInstalled]
+            for source in ActivityHooks.Source.allCases {
+                status[source.rawValue] = ActivityHooks.isInstalled(source)
+            }
+            return HTTPResponse(json: status)
+
+        case ("POST", "/activity-hooks/install"), ("POST", "/activity-hooks/remove"):
+            guard let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any],
+                  let raw = json["source"] as? String,
+                  let source = ActivityHooks.Source(rawValue: raw)
+            else { return HTTPResponse(status: 400, error: "need {source}") }
+            do {
+                if request.path.hasSuffix("/install") {
+                    try ActivityHooks.install(source)
+                } else {
+                    try ActivityHooks.remove(source)
+                }
+                return HTTPResponse(json: ["ok": true])
+            } catch {
+                return HTTPResponse(status: 500, error: error.localizedDescription)
+            }
 
         case ("GET", "/text"):
             let target: TerminalTab?

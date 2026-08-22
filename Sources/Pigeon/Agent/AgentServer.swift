@@ -19,6 +19,12 @@ import Security
 ///       and the agent waits (120 s, then auto-deny) for:
 ///   POST /confirm   (same auth rules)
 ///     Body: {"id": "...", "allow": true|false}
+///   POST /activity   (same auth rules)
+///     Headers: X-Pigeon-Surface: <surface id>
+///     Body: {"event": "busy"|"idle"|"ping", "source": "pi"|"claude-code"|"codex"}
+///     Reporting hook for coding agents (see ActivityHooks): busy/idle
+///     drive the tab spinner authoritatively, ping marks the surface as
+///     hook-driven. Returns an empty 200 immediately.
 ///
 /// The bind is 127.0.0.1-only, but that alone is not a trust boundary:
 /// any local process — including a browser tab via a simple POST, or a
@@ -166,6 +172,22 @@ final class AgentServer {
             }
             Task { @MainActor in
                 ConfirmationBroker.shared.resolve(id: id, allow: allow)
+            }
+            send(connection, raw: "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            return
+        }
+        if request.method == "POST", request.path == "/activity" {
+            guard let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any],
+                  let event = json["event"] as? String,
+                  ["busy", "idle", "ping"].contains(event),
+                  let surfaceID = request.headers["x-pigeon-surface"], !surfaceID.isEmpty
+            else {
+                send(connection, raw: "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                return
+            }
+            Task { @MainActor in
+                TabActivityMonitor.shared.handleHookActivity(
+                    surfaceID: surfaceID, event: event)
             }
             send(connection, raw: "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
             return

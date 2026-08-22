@@ -29,6 +29,8 @@ struct AgentSettingsTab: View {
                 ProviderSection(provider: provider)
                     .id(provider.id)
             }
+
+            ActivityHooksSection()
         }
         .formStyle(.grouped)
     }
