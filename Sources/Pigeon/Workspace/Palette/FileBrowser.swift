@@ -52,6 +52,8 @@ struct FileBrowser: View {
     /// Search hits for the current query (computed off-main; set when
     /// done). Reset whenever the query changes.
     @State private var searchMatches: [FileNode]?
+    /// Autofocus the search field when the browser opens.
+    @FocusState private var focusSearch: Bool
 
     private var effectiveTreeWidth: CGFloat {
         treeWidth ?? min(260, preferredSize.width * 0.32)
@@ -83,12 +85,16 @@ struct FileBrowser: View {
                         Image(systemName: "magnifyingglass")
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
-                        TextField("Search", text: searchBinding)
+                        TextField("Search files…", text: searchBinding)
                             .textFieldStyle(.plain)
                             .font(.system(size: 12))
+                            .onSubmit { focusSearch = false }
+                            .focused($focusSearch)
                         if searchQuery != nil {
                             Button {
                                 searchQuery = nil
+                                searchMatches = nil
+                                focusSearch = true
                             } label: {
                                 Image(systemName: "xmark.circle.fill")
                                     .font(.system(size: 11))
@@ -160,6 +166,7 @@ struct FileBrowser: View {
             .coordinateSpace(name: "pigeon-split")
         }
         .frame(width: preferredSize.width, height: preferredSize.height)
+        .onAppear { focusSearch = true }
     }
 
     private var searchBinding: Binding<String> {
@@ -172,19 +179,22 @@ struct FileBrowser: View {
             })
     }
 
-    /// Debounced recursive search, off the main thread: a big tree
-    /// mustn't stall typing.
+    /// Debounced search-as-you-type: fd runs off-main, respects
+    /// .gitignore, and parallelizes the walk natively — broad queries
+    /// over big trees return without beachballing. fd missing falls
+    /// back to no results rather than a hand-rolled walk: fast broad
+    /// search is the whole point.
     private func scheduleSearch() {
         searchTask?.cancel()
-        let query = searchQuery?.lowercased()
-        guard var query, !query.isEmpty else { return }
-        while query.last == " " { query.removeLast() }
+        guard let query = searchQuery?.trimmingCharacters(in: .whitespaces),
+              !query.isEmpty
+        else { return }
         let root = rootURL
         searchTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 150_000_000)
             guard !Task.isCancelled else { return }
             let matches = await Task.detached(priority: .userInitiated) {
-                Self.searchSync(root, for: query)
+                Self.fdSearch(query, root: root)
             }.value
             guard !Task.isCancelled else { return }
             searchMatches = matches
@@ -193,41 +203,43 @@ struct FileBrowser: View {
 
     @State private var searchTask: Task<Void, Never>?
 
-    /// Synchronous recursive walk (runs on the detached task).
-    private static func searchSync(_ root: URL, for query: String) -> [FileNode] {
-        var matches: [FileNode] = []
-        search(root, for: query, into: &matches, limit: 500)
-        return matches
+    /// fd binary, if installed.
+    private static var fdPath: String? {
+        ["/opt/homebrew/bin/fd", "/usr/local/bin/fd"]
+            .first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
-    /// Depth-first walk collecting files/directories whose name contains
-    /// the query. Hidden files skipped, symlink cycles broken by a depth
-    /// cap.
-    private static func search(
-        _ directory: URL, for query: String,
-        into matches: inout [FileNode], limit: Int, depth: Int = 0
-    ) {
-        guard matches.count < limit, depth < 12 else { return }
-        guard let entries = try? FileManager.default.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: [.skipsHiddenFiles])
-        else { return }
-        for entry in entries.sorted(by: {
-            $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent)
-                == .orderedAscending
-        }) {
-            guard matches.count < limit else { return }
-            var isDir: ObjCBool = false
-            let isDirectory = FileManager.default.fileExists(
-                atPath: entry.path, isDirectory: &isDir) && isDir.boolValue
-            if entry.lastPathComponent.lowercased().contains(query) {
-                matches.append(FileNode(url: entry, isDirectory: isDirectory))
-            }
-            if isDirectory {
-                search(entry, for: query, into: &matches, limit: limit, depth: depth + 1)
-            }
-        }
+    /// Name-substring search via fd: dotfiles included, .gitignore
+    /// respected (fd's default), files and directories, capped.
+    private static func fdSearch(_ query: String, root: URL) -> [FileNode] {
+        guard let fd = fdPath else { return [] }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: fd)
+        process.arguments = [
+            query, root.path,
+            "--hidden",
+            "--max-results", "500",
+            "--max-depth", "12",
+            "--absolute-path",
+            "--type", "f", "--type", "d",
+        ]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return [] }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return [] }
+        return String(data: data, encoding: .utf8)?
+            .components(separatedBy: "\n")
+            .filter { !$0.isEmpty }
+            .map { line -> FileNode in
+                let url = URL(fileURLWithPath: line)
+                var isDir: ObjCBool = false
+                let isDirectory = FileManager.default.fileExists(
+                    atPath: line, isDirectory: &isDir) && isDir.boolValue
+                return FileNode(url: url, isDirectory: isDirectory)
+            } ?? []
     }
 }
 
