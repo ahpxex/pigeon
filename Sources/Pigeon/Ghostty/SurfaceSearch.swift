@@ -142,6 +142,23 @@ extension Ghostty.SurfaceView {
         performBinding("scroll_to_bottom")
     }
 
+    /// Whether the viewport sits at the live bottom of the screen (no
+    /// scrollback above the visible area). Cheap probe: compare the
+    /// viewport's bottom row text with the screen's bottom row — there
+    /// is no kernel callback for scroll position, so this is sampled
+    /// by whoever needs it (the scroll-to-bottom overlay button).
+    func isScrolledToBottom() -> Bool {
+        guard let surface, let grid = searchGrid() else { return true }
+        let total = totalScreenRows(cols: grid.cols, viewportRows: grid.rows)
+        let last = max(0, total - 1)
+        guard let viewport = readViewport(rows: grid.rows, cols: grid.cols)?.text,
+              let lastLine = readScreenRows(last, last, cols: grid.cols)
+        else { return true }
+        let viewportBottom = viewport.components(separatedBy: "\n").last ?? ""
+        return viewportBottom.trimmingCharacters(in: .whitespaces)
+            == lastLine.trimmingCharacters(in: .whitespaces)
+    }
+
     /// Top window padding in view points (config window-padding-y);
     /// content rows start below it.
     static func windowPaddingY() -> Double {

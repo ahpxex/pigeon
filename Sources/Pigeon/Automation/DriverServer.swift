@@ -369,6 +369,26 @@ final class DriverServer {
             tab.surfaceView.sendText(text)
             return HTTPResponse(json: ["ok": true])
 
+        case ("GET", "/scroll/atbottom"):
+            guard let tab = manager.selectedTab else {
+                return HTTPResponse(status: 404, error: "no selected tab")
+            }
+            return HTTPResponse(json: ["atBottom": tab.surfaceView.isScrolledToBottom()])
+
+        case ("POST", "/input/scroll"):
+            // Scroll the viewport by rows (negative = up), through the
+            // ghostty binding path — same as a real scroll gesture.
+            guard let tab = manager.selectedTab else {
+                return HTTPResponse(status: 404, error: "no selected tab")
+            }
+            guard let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any],
+                  let rows = json["rows"] as? Int
+            else { return HTTPResponse(status: 400, error: "need {rows}") }
+            // scrollLines: negative scrolls up (into scrollback),
+            // positive down — same sign convention as rows.
+            tab.surfaceView.scrollLines(rows)
+            return HTTPResponse(json: ["ok": true])
+
         case ("POST", "/input/key"):
             guard let tab = manager.selectedTab else {
                 return HTTPResponse(status: 404, error: "no selected tab")

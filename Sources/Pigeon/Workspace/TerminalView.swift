@@ -87,6 +87,12 @@ private struct WorkspaceLayout: View {
                     .overlay(alignment: .topTrailing) {
                         TabSearchBar(search: tab.search)
                     }
+                    .overlay {
+                        // Floating jump-to-bottom pill when scrolled up.
+                        if tab.id == tabManager.selectedTabID {
+                            ScrollToBottomButton(tab: tab)
+                        }
+                    }
                     .opacity(tab.id == tabManager.selectedTabID ? 1 : 0)
                     .allowsHitTesting(tab.id == tabManager.selectedTabID)
                 }
