@@ -17,6 +17,13 @@ struct FileBrowser: View {
     /// Sheet size, derived from the presenting window (proportional,
     /// slightly smaller, centered).
     var preferredSize: CGSize = CGSize(width: 720, height: 520)
+    /// Left pane width; live-adjusted by the divider drag. Defaults to
+    /// roughly a third of the sheet — narrow tree, wide preview.
+    @State private var treeWidth: CGFloat?
+
+    private var effectiveTreeWidth: CGFloat {
+        treeWidth ?? min(260, preferredSize.width * 0.32)
+    }
 
     @StateObject private var selection = FileSelection()
 
@@ -44,13 +51,44 @@ struct FileBrowser: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.vertical, 6)
                 }
-                .frame(maxWidth: .infinity)
+                .frame(width: effectiveTreeWidth)
 
-                Divider()
+                // Draggable divider: narrow tree on the left, wide
+                // preview on the right. The drag sets the width from the
+                // pointer's position in the split's coordinate space —
+                // no delta bookkeeping, and the drag survives the
+                // divider sliding under the pointer.
+                Color.clear
+                    .frame(width: 10)
+                    .contentShape(Rectangle())
+                    .overlay {
+                        Rectangle()
+                            .fill(.quaternary)
+                            .frame(width: 1)
+                    }
+                    .onHover { hovering in
+                        // set() (not push/pop): the divider moves under
+                        // the pointer during drags, which would unbalance
+                        // the cursor stack.
+                        if hovering {
+                            NSCursor.resizeLeftRight.set()
+                        } else if NSCursor.current == NSCursor.resizeLeftRight {
+                            NSCursor.arrow.set()
+                        }
+                    }
+                    .gesture(
+                        DragGesture(minimumDistance: 1, coordinateSpace: .named("pigeon-split"))
+                            .onChanged { value in
+                                treeWidth = min(
+                                    max(160, value.location.x),
+                                    preferredSize.width - 260)
+                            }
+                    )
 
                 Group {
                     if let url = selection.url {
                         FilePreview(url: url)
+                            .equatable()
                     } else {
                         EmptyHint(icon: "doc.text.magnifyingglass",
                                   title: "No file selected",
@@ -59,6 +97,7 @@ struct FileBrowser: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+            .coordinateSpace(name: "pigeon-split")
         }
         .frame(width: preferredSize.width, height: preferredSize.height)
     }
@@ -229,7 +268,10 @@ private struct EmptyHint: View {
 /// Right-hand pane: renders whatever is selected. Loading (decode +
 /// highlight) happens on a background task; rows render lazily so a
 /// 256 KB file never beachballs the browser.
-private struct FilePreview: View {
+private struct FilePreview: View, Equatable {
+    static func == (lhs: FilePreview, rhs: FilePreview) -> Bool {
+        lhs.url == rhs.url
+    }
     let url: URL
 
     @State private var preview: PreviewBody?
