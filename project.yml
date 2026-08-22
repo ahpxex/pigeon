@@ -11,9 +11,9 @@ settings:
     MACOSX_DEPLOYMENT_TARGET: "13.0"
 
 packages:
-  Highlightr:
-    url: https://github.com/raspu/Highlightr
-    exactVersion: 2.3.0
+  HighlightSwift:
+    url: https://github.com/appstefan/HighlightSwift
+    from: 1.1.0
   MarkdownUI:
     url: https://github.com/gonzalezreal/swift-markdown-ui
     branch: main
@@ -29,9 +29,10 @@ targets:
       # Static library xcframework, so no embedding.
       - framework: vendor/ghostty/macos/GhosttyKit.xcframework
         embed: false
-      # highlight.js wrapper: syntax highlighting for the file browser's
-      # code preview (185+ languages, bundled themes, fully offline).
-      - package: Highlightr
+      # highlight.js wrapper with a modern async API (AttributedString,
+      # auto language detection, dark-mode-syncing themes) for the file
+      # browser's code preview.
+      - package: HighlightSwift
       # Full CommonMark rendering (tables, task lists, blockquotes,
       # images) for the file browser's markdown preview.
       - package: MarkdownUI

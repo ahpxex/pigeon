@@ -2,16 +2,45 @@ import AppKit
 import MarkdownUI
 import SwiftUI
 
-/// The terminal's configured font (KernelSettings fontFamily/size),
-/// used for code previews so the browser reads like the terminal.
-/// Falls back to the system monospaced face when no family is set or
-/// the family fails to load.
+/// The terminal's configured font (font-family chain + font-size from
+/// the kernel config file), used for code previews so the browser
+/// reads like the terminal.
+///
+/// The config file is the source of truth: font-family is a repeatable
+/// key whose LAST occurrence wins (same as the kernel), and the GUI's
+/// UserDefaults copy is only set when the user picks from the Settings
+/// picker — hand-edited configs leave it empty.
 @MainActor
 enum PreviewFont {
+    /// Font matching the terminal's fallback chain: primary face +
+    /// cascading fallbacks, so CJK glyphs land on the configured
+    /// fallback face (e.g. Fira Code + Maple Mono CN) exactly like the
+    /// kernel renders them, instead of degrading to the system CJK
+    /// font. NSFont can't express chains; cascaded font descriptors can.
+    private static func chainedFont(families: [String], size: CGFloat) -> NSFont? {
+        let loaded = families.compactMap { NSFont(name: $0, size: size) }
+        guard let primary = loaded.first else { return nil }
+        guard loaded.count > 1 else { return primary }
+        let cascade = loaded.dropFirst()
+            .map { $0.fontDescriptor }
+        let descriptor = primary.fontDescriptor.addingAttributes(
+            [.cascadeList: cascade])
+        return NSFont(descriptor: descriptor, size: size)
+    }
+
+    /// Chained font at an explicit size (the theme asks for its own
+    /// point size; honor it rather than the terminal's).
+    static func terminalSized(_ size: CGFloat) -> NSFont {
+        let (families, _) = terminalFontSpec()
+        if let font = chainedFont(families: families, size: size) {
+            return font
+        }
+        return NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+    }
+
     static var terminal: NSFont {
-        let size = CGFloat(KernelSettings.shared.fontSize)
-        let family = KernelSettings.shared.fontFamily
-        if !family.isEmpty, let font = NSFont(name: family, size: size) {
+        let (families, size) = terminalFontSpec()
+        if let font = chainedFont(families: families, size: size) {
             return font
         }
         return NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
@@ -19,12 +48,56 @@ enum PreviewFont {
 
     /// Scaled variant for dense UI spots (path captions etc.).
     static var terminalSmall: NSFont {
-        let size = max(10, CGFloat(KernelSettings.shared.fontSize) - 2)
-        let family = KernelSettings.shared.fontFamily
-        if !family.isEmpty, let font = NSFont(name: family, size: size) {
+        let (families, _) = terminalFontSpec()
+        let size = max(10, terminalFontSize - 2)
+        if let font = chainedFont(families: families, size: size) {
             return font
         }
         return NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+    }
+
+    /// Parse font-family (repeatable, last wins — matching the kernel's
+    /// semantics) and font-size from the effective config file.
+    private static var cachedSpec: (families: [String], size: CGFloat)?
+    private static var cachedSpecDate: Date?
+
+    private static var terminalFontSize: CGFloat {
+        terminalFontSpec().size
+    }
+
+    private static func terminalFontSpec() -> (families: [String], size: CGFloat) {
+        let url = Ghostty.ConfigStore.configFileURL
+        let modDate = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
+            .contentModificationDate
+        if let cached = cachedSpec, cachedSpecDate == modDate, let modDate {
+            return cached
+        }
+        var families: [String] = []
+        var size: CGFloat = KernelSettings.shared.fontSize
+        if let text = try? String(contentsOf: url, encoding: .utf8) {
+            for rawLine in text.components(separatedBy: "\n") {
+                let line = rawLine.trimmingCharacters(in: .whitespaces)
+                if line.hasPrefix("#") || !line.contains("=") { continue }
+                let parts = line.split(separator: "=", maxSplits: 1)
+                guard parts.count == 2 else { continue }
+                let key = parts[0].trimmingCharacters(in: .whitespaces)
+                let value = parts[1].trimmingCharacters(in: .whitespaces)
+                    .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+                switch key {
+                case "font-family":
+                    // Empty value resets the list (kernel semantics).
+                    if value.isEmpty { families.removeAll() }
+                    else { families.append(value) }
+                case "font-size":
+                    if let parsed = Double(value), parsed > 0 { size = parsed }
+                default: break
+                }
+            }
+        }
+        let spec = (families: families, size: size)
+        cachedSpec = spec
+        cachedSpecDate = modDate
+        return spec
     }
 }
 
@@ -519,7 +592,7 @@ private struct FilePreview: View, Equatable {
                 ScrollView {
                     Markdown(source)
                         .markdownTheme(Self.terminalCodeTheme)
-                        .markdownCodeSyntaxHighlighter(HighlightrCodeSyntaxHighlighter())
+                        .markdownCodeSyntaxHighlighter(MarkdownCodeHighlighter())
                         .textSelection(.enabled)
                         .padding(16)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -621,9 +694,9 @@ private struct FilePreview: View, Equatable {
             if isMarkdown {
                 return PreviewBody.markdown(text)
             }
-            if let lines = await MainActor.run(body: {
-                SyntaxHighlighter.attributedLines(for: text, fileURL: url)
-            }) {
+            if let lines = await SyntaxHighlighter.attributedLines(
+                for: text, fileURL: url)
+            {
                 return .code(lines, truncated: truncated)
             }
             return .plain(text.components(separatedBy: "\n").map(NSAttributedString.init))

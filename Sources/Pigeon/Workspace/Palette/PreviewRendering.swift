@@ -1,23 +1,16 @@
 import AppKit
-import Highlightr
+import HighlightSwift
 import MarkdownUI
 import SwiftUI
 
 /// Syntax highlighting for the file browser's preview pane, backed by
-/// Highlightr (highlight.js). One shared instance: the JS context is
-/// expensive to boot, and highlights are fast enough to serialize.
+/// HighlightSwift (highlight.js in an actor-isolated JSContext). Output
+/// carries colors only — HighlightSwift strips font attributes, so the
+/// terminal font applied by the caller always wins.
 @MainActor
 enum SyntaxHighlighter {
-    private static let shared: Highlightr? = {
-        guard let highlightr = Highlightr() else { return nil }
-        // GitHub Light: matches the markdown preview's .gitHub theme —
-        // the preview pane is light, and dark-theme token colors on a
-        // light card were unreadable.
-        highlightr.setTheme(to: "github")
-        return highlightr
-    }()
+    private static let highlight = Highlight()
 
-    /// highlight.js language for a file, best-effort by extension.
     static func language(for url: URL) -> String? {
         switch url.pathExtension.lowercased() {
         case "swift": return "swift"
@@ -46,37 +39,91 @@ enum SyntaxHighlighter {
         }
     }
 
-    /// Highlight whole text as one attributed string. Highlightr calls
-    /// must stay on main (JavaScriptCore hop); highlights are fast and
-    /// the preview is one file at a time, so that's fine.
-    static func attributedString(for text: String, language: String) -> NSAttributedString? {
-        shared?.highlight(text, as: language, fastRender: true)
+    /// GitHub theme matching the system appearance (the markdown preview
+    /// uses the light gitHub theme on the light pane).
+    private static var colors: HighlightColors {
+        let dark = NSApp.effectiveAppearance.bestMatch(
+            from: [.darkAqua, .aqua]) == .darkAqua
+        return dark ? .dark(.github) : .light(.github)
     }
 
-    /// Highlight per line (lazily rendered rows keep huge files smooth).
-    /// highlight.js state (strings/comments) can span lines, so per-line
-    /// highlighting is approximate — acceptable for a preview pane.
-    static func attributedLines(for text: String, fileURL: URL) -> [NSAttributedString]? {
-        guard let language = language(for: fileURL) else { return nil }
-        return text.components(separatedBy: "\n").map {
-            attributedString(for: $0, language: language) ?? NSAttributedString(string: $0)
+    /// Whole-text highlight as one attributed string. Call from any
+    /// async context; runs off-main inside the HLJS actor.
+    static func attributedString(
+        for text: String, language: String?
+    ) async -> NSAttributedString? {
+        do {
+            let attributed: AttributedString
+            if let language {
+                attributed = try await highlight.attributedText(
+                    text, language: language, colors: colors)
+            } else {
+                attributed = try await highlight.attributedText(
+                    text, colors: colors)
+            }
+            return try NSAttributedString(
+                attributed, including: \.appKit)
+        } catch {
+            return nil
         }
+    }
+
+    /// Whole-text highlight split into per-line attributed strings
+    /// (lazily rendered rows keep huge files smooth; splitting after
+    /// highlighting keeps multi-line tokens — comments, strings —
+    /// correctly colored, unlike per-line highlighting).
+    static func attributedLines(
+        for text: String, fileURL: URL
+    ) async -> [NSAttributedString]? {
+        guard language(for: fileURL) != nil else { return nil }
+        guard let whole = await attributedString(
+            for: text, language: language(for: fileURL))
+        else { return nil }
+        return splitLines(whole)
+    }
+
+    /// Split an attributed string on newlines, carrying each character's
+    /// attributes into its line: attribute runs are split at \n manually
+    /// and accumulated into the current line across runs.
+    static func splitLines(_ source: NSAttributedString) -> [NSAttributedString] {
+        var lines: [NSAttributedString] = []
+        var current = NSMutableAttributedString()
+        let full = NSRange(location: 0, length: source.length)
+        source.enumerateAttributes(in: full) { attrs, partRange, _ in
+            let part = source.attributedSubstring(from: partRange).string as NSString
+            var segmentStart = 0
+            for i in 0..<part.length where part.character(at: i) == 0x0A {
+                current.append(NSAttributedString(
+                    string: part.substring(with: NSRange(location: segmentStart, length: i - segmentStart)),
+                    attributes: attrs))
+                lines.append(current)
+                current = NSMutableAttributedString()
+                segmentStart = i + 1
+            }
+            if segmentStart < part.length {
+                current.append(NSAttributedString(
+                    string: part.substring(from: segmentStart),
+                    attributes: attrs))
+            }
+        }
+        lines.append(current)
+        return lines
     }
 }
 
-/// Bridges Highlightr into MarkdownUI's code-block highlighter: each
-/// colored run becomes a Text segment, concatenated into one Text.
+/// Bridges HighlightSwift into MarkdownUI's (synchronous) code-block
+/// highlighter: blocks the calling thread on the HLJS actor. Markdown
+/// code blocks are small, and the actor never executes on main, so the
+/// brief block is safe.
 @MainActor
-struct HighlightrCodeSyntaxHighlighter: CodeSyntaxHighlighter {
+struct MarkdownCodeHighlighter: CodeSyntaxHighlighter {
     func highlightCode(_ code: String, language: String?) -> Text {
-        let ns = (language.flatMap {
-                    SyntaxHighlighter.attributedString(for: code, language: $0)
-                })
-            ?? SyntaxHighlighter.attributedString(for: code, language: "plaintext")
-            ?? NSAttributedString(string: code)
-
+        guard let ns = blockingHighlight(code, language: language) else {
+            return Text(code)
+        }
         var segments: [Text] = []
-        ns.enumerateAttributes(in: NSRange(location: 0, length: ns.length)) { attrs, range, _ in
+        let full = NSRange(location: 0, length: ns.length)
+        ns.enumerateAttributes(in: full) { attrs, range, _ in
             let body = ns.attributedSubstring(from: range).string
             var segment = Text(body)
             if let color = attrs[.foregroundColor] as? NSColor {
@@ -88,6 +135,20 @@ struct HighlightrCodeSyntaxHighlighter: CodeSyntaxHighlighter {
         while let next = segments.popLast() {
             result = next + result
         }
+        return result
+    }
+
+    private func blockingHighlight(
+        _ code: String, language: String?
+    ) -> NSAttributedString? {
+        let semaphore = DispatchSemaphore(value: 0)
+        var result: NSAttributedString?
+        Task.detached(priority: .userInitiated) {
+            result = await SyntaxHighlighter.attributedString(
+                for: code, language: language)
+            semaphore.signal()
+        }
+        semaphore.wait()
         return result
     }
 }
