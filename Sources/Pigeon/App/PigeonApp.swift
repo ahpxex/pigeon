@@ -72,6 +72,13 @@ private struct PigeonCommands: Commands {
                 }
             }
             .keyboardShortcut("j", modifiers: .command)
+
+            // cmd+shift+G opens the Git workspace for the selected tab's
+            // repository.
+            Button("Git") {
+                NotificationCenter.default.post(name: .pigeonOpenGit, object: nil)
+            }
+            .keyboardShortcut("g", modifiers: [.command, .shift])
         }
         CommandGroup(after: .sidebar) {
             Button("Toggle Sidebar") {

@@ -1,5 +1,6 @@
+import AppKit
+import SwiftGitX
 import SwiftUI
-import GhosttyKit
 
 /// Root view of the main window: vertical tab sidebar + terminal area,
 /// all painted with the terminal's configured background color so the
@@ -60,6 +61,8 @@ private struct WorkspaceLayout: View {
     /// Browser sheet size at open time, proportional to the window
     /// (slightly smaller, so the sheet reads as "of this window").
     @State private var browserSize = CGSize(width: 720, height: 520)
+    /// Git workspace sheet: repository root of the launching tab.
+    @State private var gitURL: URL?
 
     var body: some View {
         HStack(spacing: 0) {
@@ -152,6 +155,23 @@ private struct WorkspaceLayout: View {
                 ?? FileManager.default.homeDirectoryForCurrentUser
             browserSize = Self.browserSize(for: tabManager.window)
         }
+        .onReceive(NotificationCenter.default.publisher(for: .pigeonOpenGit)) { _ in
+            // Root at the selected tab's repository, walking up from its
+            // cwd; not a repo (or no tab) = ignore.
+            if let url = tabManager.selectedTab?.surfaceView.pwd
+                .flatMap(Self.gitRoot(of:)) {
+                gitURL = url
+            }
+        }
+        .sheet(isPresented: Binding(
+            get: { gitURL != nil },
+            set: { if !$0 { gitURL = nil } })) {
+            if let url = gitURL {
+                GitWorkspace(
+                    repoURL: url,
+                    preferredSize: Self.browserSize(for: tabManager.window))
+            }
+        }
         .ignoresSafeArea()
         .frame(minWidth: 400, minHeight: 300)
     }
@@ -183,6 +203,15 @@ extension WorkspaceLayout {
         return CGSize(
             width: max(640, frame.width * 0.75),
             height: max(420, frame.height * 0.78))
+    }
+
+    /// Repository root containing a path, or nil when not inside a git
+    /// repo. Uses SwiftGitX's discovery so submodule/worktree layouts
+    /// behave like on the command line.
+    static func gitRoot(of path: String) -> URL? {
+        guard let repository = try? Repository.open(at: URL(fileURLWithPath: path))
+        else { return nil }
+        return URL(fileURLWithPath: repository.path.path)
     }
 }
 

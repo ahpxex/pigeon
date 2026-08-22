@@ -17,6 +17,9 @@ packages:
   MarkdownUI:
     url: https://github.com/gonzalezreal/swift-markdown-ui
     branch: main
+  SwiftGitX:
+    url: https://github.com/ibrahimcetin/SwiftGitX
+    exactVersion: 0.4.0
 
 targets:
   Pigeon:
@@ -36,6 +39,9 @@ targets:
       # Full CommonMark rendering (tables, task lists, blockquotes,
       # images) for the file browser's markdown preview.
       - package: MarkdownUI
+      # libgit2 1.9 wrapper (status/diff/patch/log/commit/...) for the
+      # built-in Git view.
+      - package: SwiftGitX
     info:
       path: Sources/Pigeon/Info.plist
       properties:

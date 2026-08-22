@@ -547,6 +547,10 @@ extension Ghostty {
                         name: .pigeonOpenFileBrowser, object: self)
                     return true
                 }
+                if chars == "g" || chars == "G" {
+                    NotificationCenter.default.post(name: .pigeonOpenGit, object: self)
+                    return true
+                }
             }
 
             let key = event.ghosttyKeyEvent(GHOSTTY_ACTION_PRESS)

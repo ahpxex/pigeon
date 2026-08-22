@@ -7,6 +7,8 @@ import SwiftUI
 extension Notification.Name {
     static let pigeonOpenPalette = Notification.Name("pigeonOpenPalette")
     static let pigeonOpenFileBrowser = Notification.Name("pigeonOpenFileBrowser")
+    /// Open the Git workspace for the selected tab's repository.
+    static let pigeonOpenGit = Notification.Name("pigeonOpenGit")
 }
 
 /// The command palette: a fuzzy-searchable list over every open tab and
