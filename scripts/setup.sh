@@ -6,9 +6,12 @@ set -e
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
-export http_proxy=http://127.0.0.1:7890
-export https_proxy=http://127.0.0.1:7890
-export no_proxy=localhost,127.0.0.1,::1
+# Local proxy (only on the dev machine; export PIGEON_USE_PROXY=1 there).
+if [ "${PIGEON_USE_PROXY:-0}" = "1" ]; then
+  export http_proxy=http://127.0.0.1:7890
+  export https_proxy=http://127.0.0.1:7890
+  export no_proxy=localhost,127.0.0.1,::1
+fi
 
 # Toolchain checks
 if [ ! -x /opt/homebrew/opt/zig@0.14/bin/zig ]; then

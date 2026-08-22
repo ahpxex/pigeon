@@ -33,6 +33,14 @@ jobs:
 
       - name: Build libghostty + deps, generate project
         run: |
+          # vendor/ is gitignored: clone ghostty at the pinned tag,
+          # apply patches, fetch deps, build the xcframework.
+          GHOSTTY_TAG=v1.2.3
+          git clone --depth 1 --branch "$GHOSTTY_TAG" \
+            https://github.com/ghostty-org/ghostty.git vendor/ghostty
+          for patch in patches/*.patch; do
+            git -C vendor/ghostty apply "$patch"
+          done
           scripts/fetch-ghostty-deps.sh
           scripts/build-ghostty.sh
           xcodegen generate
