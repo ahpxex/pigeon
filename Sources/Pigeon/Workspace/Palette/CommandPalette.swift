@@ -21,6 +21,8 @@ struct CommandPalette: View {
         case newWindow
         case openSettings
         case toggleSidebar
+        /// cd the current tab's shell into a recent directory (zoxide).
+        case openDirectory(URL)
 
         var label: String {
             switch self {
@@ -29,6 +31,8 @@ struct CommandPalette: View {
             case .newWindow: return "New Window"
             case .openSettings: return "Open Settings"
             case .toggleSidebar: return "Toggle Sidebar"
+            case .openDirectory(let url): return
+                "cd \((url.path as NSString).abbreviatingWithTildeInPath)"
             }
         }
 
@@ -39,6 +43,7 @@ struct CommandPalette: View {
             case .newWindow: return "macwindow.badge.plus"
             case .openSettings: return "gearshape"
             case .toggleSidebar: return "sidebar.left"
+            case .openDirectory: return "arrow.turn.down.right"
             }
         }
     }
@@ -179,11 +184,15 @@ final class PaletteModel: ObservableObject {
     @Published var items: [CommandPalette.Item] = []
     @Published var selectionIndex = 0
 
-    /// Rebuild the item list: tab rows first, then actions, filtered by
-    /// the query when present.
+    /// Rebuild the item list: tab rows first, then recent directories
+    /// (zoxide), then built-in actions, filtered by the query when
+    /// present.
     func rebuild() {
         let tabs = TabManager.all.flatMap { manager in
             manager.tabs.map { CommandPalette.Item.tab(manager, $0.id) }
+        }
+        let recents = recentDirectories.prefix(6).map {
+            CommandPalette.Item.action(.openDirectory(URL(fileURLWithPath: $0)))
         }
         let actions: [CommandPalette.Item] = [
             .action(.browseFiles(startDirectory)),
@@ -192,7 +201,7 @@ final class PaletteModel: ObservableObject {
             .action(.openSettings),
             .action(.toggleSidebar),
         ]
-        let all = tabs + actions
+        let all = tabs + recents + actions
         let trimmed = query.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else {
             items = all
@@ -213,6 +222,37 @@ final class PaletteModel: ObservableObject {
             return URL(fileURLWithPath: pwd)
         }
         return FileManager.default.homeDirectoryForCurrentUser
+    }
+
+    /// zoxide's frecency-ranked directories (its own database, same
+    /// data `z`/`zi` use). Nil when zoxide isn't installed.
+    private static var zoxidePath: String? {
+        ["/opt/homebrew/bin/zoxide", "/usr/local/bin/zoxide"]
+            .first { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+
+    private var recentDirectories: [String] {
+        guard let zoxide = Self.zoxidePath else { return [] }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: zoxide)
+        process.arguments = ["query", "-l", "--score"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return [] }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        // Lines look like " 116.0 /Users/ahpx/code" — score then path
+        // (paths with spaces are fine, only the first token is numeric).
+        return String(data: data, encoding: .utf8)?
+            .components(separatedBy: "\n")
+            .compactMap { line in
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                guard !trimmed.isEmpty else { return nil }
+                // Strip the leading score token.
+                let parts = trimmed.split(separator: " ", maxSplits: 1)
+                return parts.count == 2 ? String(parts[1]) : nil
+            } ?? []
     }
 
     func moveSelection(_ delta: Int) {
@@ -249,8 +289,26 @@ final class PaletteModel: ObservableObject {
                 withAnimation(.easeOut(duration: 0.15)) {
                     TabManager.forKeyWindow?.workspace.toggleSidebar()
                 }
+            case .openDirectory(let url):
+                // Type the cd into the key tab's shell — the real input
+                // path, so zoxide records the visit and the shell prompt
+                // stays honest. Only when the tab isn't mid-TUI. The cd
+                // text goes through the paste path; Enter must go through
+                // the key path (bracketed paste swallows trailing
+                // newlines — they don't execute).
+                guard let tab = TabManager.forKeyWindow?.selectedTab,
+                      !tab.surfaceView.needsConfirmQuit
+                else { return }
+                tab.surfaceView.sendText("cd " + Self.shellQuoted(url.path))
+                tab.surfaceView.sendKey(keyCode: 36, text: "\r")
             }
         }
+    }
+
+    /// Quote a path for shells: single quotes, with embedded quotes
+    /// escaped per POSIX ('\'' ).
+    private static func shellQuoted(_ path: String) -> String {
+        return "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
     /// Tiny subsequence fuzzy score: every query character must appear
