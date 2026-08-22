@@ -10,7 +10,10 @@ import SwiftUI
 enum SyntaxHighlighter {
     private static let shared: Highlightr? = {
         guard let highlightr = Highlightr() else { return nil }
-        highlightr.setTheme(to: "pojoaque")
+        // GitHub Light: matches the markdown preview's .gitHub theme —
+        // the preview pane is light, and dark-theme token colors on a
+        // light card were unreadable.
+        highlightr.setTheme(to: "github")
         return highlightr
     }()
 

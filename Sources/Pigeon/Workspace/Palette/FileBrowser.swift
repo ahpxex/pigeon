@@ -2,6 +2,32 @@ import AppKit
 import MarkdownUI
 import SwiftUI
 
+/// The terminal's configured font (KernelSettings fontFamily/size),
+/// used for code previews so the browser reads like the terminal.
+/// Falls back to the system monospaced face when no family is set or
+/// the family fails to load.
+@MainActor
+enum PreviewFont {
+    static var terminal: NSFont {
+        let size = CGFloat(KernelSettings.shared.fontSize)
+        let family = KernelSettings.shared.fontFamily
+        if !family.isEmpty, let font = NSFont(name: family, size: size) {
+            return font
+        }
+        return NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+    }
+
+    /// Scaled variant for dense UI spots (path captions etc.).
+    static var terminalSmall: NSFont {
+        let size = max(10, CGFloat(KernelSettings.shared.fontSize) - 2)
+        let family = KernelSettings.shared.fontFamily
+        if !family.isEmpty, let font = NSFont(name: family, size: size) {
+            return font
+        }
+        return NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+    }
+}
+
 /// File browser opened from the command palette's "Browse Files"
 /// action: a lazily-expanded directory tree on the left (starting with
 /// the *contents* of the terminal's working directory — no parent row),
@@ -39,7 +65,7 @@ struct FileBrowser: View {
                 Image(systemName: "folder")
                     .foregroundStyle(.secondary)
                 Text(rootURL.path)
-                    .font(.system(size: 12, design: .monospaced))
+                    .font(Font(PreviewFont.terminalSmall))
                     .lineLimit(1)
                     .truncationMode(.head)
                     .foregroundStyle(.secondary)
@@ -480,7 +506,7 @@ private struct FilePreview: View, Equatable {
             case .markdown(let source):
                 ScrollView {
                     Markdown(source)
-                        .markdownTheme(.gitHub)
+                        .markdownTheme(Self.terminalCodeTheme)
                         .markdownCodeSyntaxHighlighter(HighlightrCodeSyntaxHighlighter())
                         .textSelection(.enabled)
                         .padding(16)
@@ -509,11 +535,27 @@ private struct FilePreview: View, Equatable {
         .task(id: url) { await load() }
     }
 
+    /// GitHub theme with the terminal's font family/size for inline and
+    /// fenced code — preview text should read like the terminal.
+    @MainActor
+    static var terminalCodeTheme: Theme {
+        let font = PreviewFont.terminal
+        return .gitHub
+            .code {
+                if let family = font.familyName {
+                    FontFamily(.custom(family))
+                }
+                FontSize(CGFloat(font.pointSize))
+            }
+    }
+
     private func lineList(_ lines: [NSAttributedString], truncated: Bool) -> some View {
-        ScrollView {
+        let font = PreviewFont.terminal
+        return ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
                     Text(AttributedString(line))
+                        .font(Font(font))
                         .padding(.horizontal, 12)
                         .padding(.vertical, 0.5)
                         .frame(maxWidth: .infinity, alignment: .leading)
