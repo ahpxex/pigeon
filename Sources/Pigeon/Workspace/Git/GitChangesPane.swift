@@ -48,7 +48,11 @@ struct GitChangesPane: View {
                                 560)
                         })
 
-            GitDiffView(patch: model.patch, title: model.selectedPath)
+            GitDiffView(
+                patch: model.patch,
+                title: model.selectedPath,
+                fileExtension: (model.selectedPath as NSString?)?.pathExtension)
+                .equatable()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .coordinateSpace(name: "git-split")
@@ -322,11 +326,27 @@ struct GitChangesPane: View {
 struct GitDiffView: View {
     let patch: Patch?
     var title: String?
+    /// File extension of the diffed file, for syntax highlighting.
+    var fileExtension: String?
+
+    @State private var highlightedLines: [Int: AttributedString] = [:]
+    @State private var highlightKey: String = ""
 
     var body: some View {
         Group {
             if let patch {
                 diffBody(patch)
+                    .onAppear {
+                        let newKey = patch.delta.newFile.path
+                        if newKey != highlightKey {
+                            highlightKey = newKey
+                            highlightedLines = [:]
+                        }
+                    }
+                    .onChange(of: patch.delta.newFile.path) { newPath in
+                        highlightKey = newPath
+                        highlightedLines = [:]
+                    }
             } else {
                 VStack(spacing: 8) {
                     Image(systemName: "arrow.left.arrow.right.square")
@@ -355,14 +375,73 @@ struct GitDiffView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(Color.primary.opacity(0.04))
                 }
-                ForEach(Array(patch.hunks.enumerated()), id: \.offset) { _, hunk in
+                ForEach(Array(patch.hunks.enumerated()), id: \.offset) { hunkIndex, hunk in
                     hunkHeader(hunk)
-                    ForEach(Array(hunk.lines.enumerated()), id: \.offset) { _, line in
-                        lineRow(line, font: font)
+                    ForEach(Array(hunk.lines.enumerated()), id: \.offset) { lineIndex, line in
+                        lineRow(line, font: font,
+                                key: "\(hunkIndex)-\(lineIndex)")
                     }
                 }
             }
         }
+        .task(id: highlightKey) { await highlight(patch) }
+    }
+
+    /// Per-line syntax highlighting: each line highlighted on its own
+    /// (simple and index-safe; multi-line constructs like block comments
+    /// lose color on continuation lines — acceptable for a diff view).
+    /// Two passes: additions+context as one document in hunk order,
+    /// deletions as one document — then both maps merge keyed by the
+    /// line's flat index across hunks.
+    private func highlight(_ patch: Patch) async {
+        guard let fileExtension,
+              let language = SyntaxHighlighter.language(forExtension: fileExtension)
+        else { return }
+
+        func body(_ line: Patch.Hunk.Line) -> String {
+            line.content.hasSuffix("\n")
+                ? String(line.content.dropLast()) : line.content
+        }
+        func isDeletion(_ line: Patch.Hunk.Line) -> Bool {
+            line.type == .deletion || line.type == .deletionEOF
+        }
+
+        // Collect flat indices for both sides.
+        var newIndex = 0, oldIndex = 0
+        var newEntries: [(Int, String)] = []
+        var oldEntries: [(Int, String)] = []
+        for hunk in patch.hunks {
+            for line in hunk.lines {
+                if isDeletion(line) {
+                    oldEntries.append((oldIndex, body(line)))
+                } else {
+                    newEntries.append((newIndex, body(line)))
+                }
+                newIndex += 1
+                oldIndex += 1
+            }
+        }
+
+        var indexed: [Int: AttributedString] = [:]
+        // Highlight both sides as documents (keeps within-side context
+        // for strings/comments better than per-line).
+        if let whole = await SyntaxHighlighter.attributedString(
+            for: newEntries.map(\.1).joined(separator: "\n"), language: language) {
+            let lines = SyntaxHighlighter.splitLines(whole)
+            for (position, index) in newEntries.map(\.0).enumerated()
+            where position < lines.count {
+                indexed[index] = AttributedString(lines[position])
+            }
+        }
+        if let whole = await SyntaxHighlighter.attributedString(
+            for: oldEntries.map(\.1).joined(separator: "\n"), language: language) {
+            let lines = SyntaxHighlighter.splitLines(whole)
+            for (position, index) in oldEntries.map(\.0).enumerated()
+            where position < lines.count {
+                indexed[index] = AttributedString(lines[position])
+            }
+        }
+        highlightedLines = indexed
     }
 
     private func hunkHeader(_ hunk: Patch.Hunk) -> some View {
@@ -375,7 +454,7 @@ struct GitDiffView: View {
             .background(Color.primary.opacity(0.04))
     }
 
-    private func lineRow(_ line: Patch.Hunk.Line, font: NSFont) -> some View {
+    private func lineRow(_ line: Patch.Hunk.Line, font: NSFont, key: String) -> some View {
         let marker: String
         let tint: Color
         switch line.type {
@@ -385,16 +464,43 @@ struct GitDiffView: View {
         }
         let content = line.content
         let body = content.hasSuffix("\n") ? String(content.dropLast()) : content
+        let hunkLineIndex = Int(key.split(separator: "-").last ?? "0") ?? 0
+        let hunkIndex = Int(key.split(separator: "-").first ?? "0") ?? 0
+        // Flat index across hunks, matching highlight()'s walk.
+        var flatIndex = 0
+        if let patch {
+            for (i, hunk) in patch.hunks.enumerated() {
+                if i < hunkIndex { flatIndex += hunk.lines.count }
+                else {
+                    flatIndex += hunkLineIndex
+                    break
+                }
+            }
+        }
+        let highlighted = highlightedLines[flatIndex]
         return HStack(alignment: .top, spacing: 0) {
             Text(marker)
                 .foregroundStyle(marker == "+" ? .green : marker == "-" ? .red : .secondary)
                 .frame(width: 18, alignment: .center)
-            Text(body)
-                .textSelection(.enabled)
+            if let highlighted {
+                Text(highlighted)
+                    .textSelection(.enabled)
+            } else {
+                Text(body)
+                    .textSelection(.enabled)
+            }
         }
         .font(Font(font))
         .padding(.horizontal, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(tint)
+    }
+}
+
+extension GitDiffView: Equatable {
+    static func == (lhs: GitDiffView, rhs: GitDiffView) -> Bool {
+        lhs.patch == rhs.patch
+            && lhs.title == rhs.title
+            && lhs.fileExtension == rhs.fileExtension
     }
 }

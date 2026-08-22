@@ -12,7 +12,11 @@ enum SyntaxHighlighter {
     private static let highlight = Highlight()
 
     static func language(for url: URL) -> String? {
-        switch url.pathExtension.lowercased() {
+        language(forExtension: url.pathExtension)
+    }
+
+    static func language(forExtension ext: String) -> String? {
+        switch ext.lowercased() {
         case "swift": return "swift"
         case "m", "mm": return "objectivec"
         case "h", "c": return "c"
