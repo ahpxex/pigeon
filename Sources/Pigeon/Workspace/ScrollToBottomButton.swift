@@ -12,26 +12,34 @@ struct ScrollToBottomButton: View {
     @State private var sampler: Timer?
 
     var body: some View {
-        ZStack {
+        VStack {
+            Spacer(minLength: 0)
             if visible {
                 Button {
                     tab.surfaceView.scrollToBottom()
                 } label: {
-                    Image(systemName: "arrow.down.to.line")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.primary.opacity(0.75))
-                        .padding(7)
-                        .background(.regularMaterial, in: Circle())
-                        .shadow(color: .black.opacity(0.18), radius: 4, y: 1)
+                    HStack(spacing: 5) {
+                        Image(systemName: "chevron.down.2")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("Jump to latest")
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundStyle(.primary.opacity(0.7))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .overlay(
+                        Capsule().strokeBorder(.primary.opacity(0.08)))
                 }
                 .buttonStyle(.plain)
                 .help("Scroll to bottom")
                 .transition(.opacity)
             }
-            Color.clear  // Keeps the view non-empty so onAppear fires.
+            // Non-empty content keeps onAppear firing (an empty Group
+            // in an overlay never appears).
+            Color.clear.frame(height: 10)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-        .padding(.bottom, 14)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .allowsHitTesting(visible)
         .onAppear { startSampling() }
         .onDisappear { sampler?.invalidate(); sampler = nil }
