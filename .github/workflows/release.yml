@@ -28,7 +28,7 @@ jobs:
 
       - name: Install zig 0.14 (Ghostty v1.2.3 toolchain)
         run: |
-          brew install zig@0.14
+          brew install zig@0.14 xcodegen
           echo "/opt/homebrew/opt/zig@0.14/bin" >> "$GITHUB_PATH"
 
       - name: Build libghostty + deps, generate project
