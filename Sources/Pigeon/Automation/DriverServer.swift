@@ -388,6 +388,21 @@ final class DriverServer {
             }
             return HTTPResponse(json: status)
 
+        case ("GET", "/outline/state"):
+            // Debug: outlines per surface (entry count / active).
+            var result: [String: [String: Any]] = [:]
+            let allTabs = TabManager.all.flatMap(\.tabs)
+            for tab in allTabs {
+                if let outline = AgentOutlineStore.outlineIfAny(for: tab.surfaceView.agentSurfaceID) {
+                    result[tab.surfaceView.agentSurfaceID] = [
+                        "active": outline.isActive,
+                        "entries": outline.entries.count,
+                        "last": outline.entries.last?.prompt ?? "",
+                    ]
+                }
+            }
+            return HTTPResponse(json: result)
+
         case ("POST", "/activity-hooks/install"), ("POST", "/activity-hooks/remove"):
             guard let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any],
                   let raw = json["source"] as? String,

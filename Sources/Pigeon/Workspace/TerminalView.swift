@@ -57,6 +57,7 @@ private struct WorkspaceLayout: View {
     @ObservedObject var workspace: WorkspaceState
 
     @State private var paletteOpen = false
+    @State private var historyOpen = false
     @State private var browserURL: URL?
     /// Browser sheet size at open time, proportional to the window
     /// (slightly smaller, so the sheet reads as "of this window").
@@ -88,6 +89,23 @@ private struct WorkspaceLayout: View {
                     }
                     .opacity(tab.id == tabManager.selectedTabID ? 1 : 0)
                     .allowsHitTesting(tab.id == tabManager.selectedTabID)
+                }
+            }
+            .overlay(alignment: .top) {
+                // Agent message history (cmd+L): palette-style overlay,
+                // click/enter to jump the scrollback to that message.
+                if historyOpen, let selected = tabManager.selectedTab,
+                   let outline = AgentOutlineStore.outlineIfAny(
+                       for: selected.surfaceView.agentSurfaceID) {
+                    ZStack {
+                        Color.black.opacity(0.28)
+                            .ignoresSafeArea()
+                            .onTapGesture { historyOpen = false }
+                        AgentMessageHistory(
+                            outline: outline, tab: selected,
+                            onClose: { historyOpen = false })
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
                 }
             }
             // Breathing room between the text grid and the window edges;
@@ -145,6 +163,9 @@ private struct WorkspaceLayout: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .pigeonOpenPalette)) { _ in
             paletteOpen.toggle()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .pigeonOpenMessageHistory)) { _ in
+            historyOpen.toggle()
         }
         .onReceive(NotificationCenter.default.publisher(for: .pigeonOpenFileBrowser)) { note in
             // The palette action carries an explicit URL; the surface's

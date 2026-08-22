@@ -79,6 +79,12 @@ private struct PigeonCommands: Commands {
                 NotificationCenter.default.post(name: .pigeonOpenGit, object: nil)
             }
             .keyboardShortcut("g", modifiers: [.command, .shift])
+
+            // cmd+L opens the agent message history for the selected tab.
+            Button("Message History") {
+                NotificationCenter.default.post(name: .pigeonOpenMessageHistory, object: nil)
+            }
+            .keyboardShortcut("l", modifiers: .command)
         }
         CommandGroup(after: .sidebar) {
             Button("Toggle Sidebar") {

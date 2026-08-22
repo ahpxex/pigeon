@@ -185,9 +185,13 @@ final class AgentServer {
                 send(connection, raw: "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
                 return
             }
+            let prompt = (json["prompt"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let source = json["source"] as? String
             Task { @MainActor in
                 TabActivityMonitor.shared.handleHookActivity(
-                    surfaceID: surfaceID, event: event)
+                    surfaceID: surfaceID, event: event,
+                    prompt: (event == "busy" && !(prompt ?? "").isEmpty) ? prompt : nil,
+                    source: source)
             }
             send(connection, raw: "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
             return

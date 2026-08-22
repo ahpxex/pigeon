@@ -551,6 +551,10 @@ extension Ghostty {
                     NotificationCenter.default.post(name: .pigeonOpenGit, object: self)
                     return true
                 }
+                if chars == "l" || chars == "L" {
+                    NotificationCenter.default.post(name: .pigeonOpenMessageHistory, object: self)
+                    return true
+                }
             }
 
             let key = event.ghosttyKeyEvent(GHOSTTY_ACTION_PRESS)

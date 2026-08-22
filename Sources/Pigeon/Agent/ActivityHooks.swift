@@ -148,7 +148,7 @@ enum ActivityHooks {
                 "Stop": "idle",
                 "StopFailure": "idle",
                 "SessionEnd": "idle",
-            ])
+            ], promptEvents: ["UserPromptSubmit"])
         case .codex:
             try ensureCodexHooksEnabled()
             try mergeJSONHooks(at: codexHooksURL, source: source, events: [
@@ -156,7 +156,7 @@ enum ActivityHooks {
                 "UserPromptSubmit": "busy",
                 "Stop": "idle",
                 "SessionEnd": "idle",
-            ])
+            ], promptEvents: ["UserPromptSubmit"], teeStdin: true)
         }
     }
 
@@ -186,7 +186,8 @@ enum ActivityHooks {
     /// (ours or stale copies from another variant) are replaced; anything
     /// else in the file is preserved untouched.
     private static func mergeJSONHooks(
-        at url: URL, source: Source, events: [String: String]
+        at url: URL, source: Source, events: [String: String],
+        promptEvents: Set<String> = [], teeStdin: Bool = false
     ) throws {
         var root = (try? Data(contentsOf: url))
             .flatMap { try? JSONSerialization.jsonObject(with: $0) }
@@ -196,13 +197,25 @@ enum ActivityHooks {
         for (event, action) in events {
             var groups = hooks[event] as? [[String: Any]] ?? []
             groups.removeAll { mentionsReporter($0) }
+            var command = "$HOME/.config/pigeon/hooks/\(reporterName) \(action) \(source.rawValue)"
+            if promptEvents.contains(event) {
+                if teeStdin {
+                    // Codex delivers the hook JSON on stdin; tee to a temp
+                    // file and hand its path as $3.
+                    command = "f=$(mktemp); cat > \"$f\"; \(command) \"$f\"; rm -f \"$f\""
+                } else {
+                    // Claude Code exec form hands the input JSON path as $3,
+                    // whose "prompt" field is the user's message.
+                    command += " \"$3\""
+                }
+            }
             groups.append([
                 "hooks": [[
                     "type": "command",
                     // Both hosts run command hooks through a shell, so
                     // $HOME expands; the path must not depend on which
                     // app variant did the installing.
-                    "command": "$HOME/.config/pigeon/hooks/\(reporterName) \(action) \(source.rawValue)",
+                    "command": command,
                 ]],
             ])
             hooks[event] = groups
@@ -302,15 +315,16 @@ enum ActivityHooks {
 
         // pigeon-activity — installed by Pigeon (Settings → Agent).
         // Reports pi's run state to the Pigeon tab that launched it, so
-        // the sidebar spinner reflects real activity. No-op outside
-        // Pigeon (no PIGEON_* environment).
+        // the sidebar spinner reflects real activity, and forwards the
+        // user's prompt for the message outline. No-op outside Pigeon
+        // (no PIGEON_* environment).
         export default function (pi: ExtensionAPI) {
           const port = process.env.PIGEON_AGENT_PORT;
           const token = process.env.PIGEON_AGENT_TOKEN;
           const surface = process.env.PIGEON_SURFACE_ID;
           if (!port || !token || !surface) return;
 
-          const report = (event: string) => {
+          const report = (event: string, prompt?: string) => {
             fetch(`http://127.0.0.1:${port}/activity`, {
               method: "POST",
               headers: {
@@ -318,7 +332,7 @@ enum ActivityHooks {
                 "X-Pigeon-Surface": surface,
                 "Content-Type": "application/json",
               },
-              body: JSON.stringify({ event, source: "pi" }),
+              body: JSON.stringify({ event, source: "pi", prompt }),
             }).catch(() => {});
           };
 
@@ -327,7 +341,7 @@ enum ActivityHooks {
           pi.on("session_start", () => report("ping"));
           // agent_settled (not agent_end): pi may auto-retry or compact
           // and continue — settled is the "really done" signal.
-          pi.on("before_agent_start", () => report("busy"));
+          pi.on("before_agent_start", (event) => report("busy", event.prompt));
           pi.on("agent_settled", () => report("idle"));
         }
         """#

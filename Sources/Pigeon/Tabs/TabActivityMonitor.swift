@@ -104,7 +104,7 @@ final class TabActivityMonitor {
     /// authoritative spinner transitions; "ping" (SessionStart-class
     /// events) only marks the surface as hook-driven so the sampling
     /// heuristics stop guessing for it.
-    func handleHookActivity(surfaceID: String, event: String) {
+    func handleHookActivity(surfaceID: String, event: String, prompt: String? = nil, source: String? = nil) {
         guard let pair = TabManager.all
             .flatMap({ manager in manager.tabs.map { (manager, $0) } })
             .first(where: { $0.1.surfaceView.agentSurfaceID == surfaceID })
@@ -112,6 +112,8 @@ final class TabActivityMonitor {
         let (manager, tab) = pair
         var activity = activities[tab.id] ?? Activity()
         activity.hooksPresent = true
+
+        let outline = AgentOutlineStore.outline(for: surfaceID)
 
         switch event {
         case "busy":
@@ -121,6 +123,9 @@ final class TabActivityMonitor {
             // armed so the prompt-return extinguish path still works.
             activity.inTUISession = true
             activities[tab.id] = activity
+            if let prompt {
+                outline.append(prompt: prompt, source: source)
+            }
             if !tab.isBusy { tab.isBusy = true }
         case "idle":
             activities[tab.id] = activity
@@ -226,6 +231,8 @@ final class TabActivityMonitor {
             // to is gone (or was never there); the session ends.
             if activity.inTUISession, !tab.surfaceView.needsConfirmQuit {
                 activity.inTUISession = false
+                AgentOutlineStore.outline(for: tab.surfaceView.agentSurfaceID)
+                    .endSession()
             }
 
             if tab.isBusy {

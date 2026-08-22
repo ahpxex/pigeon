@@ -9,6 +9,8 @@ extension Notification.Name {
     static let pigeonOpenFileBrowser = Notification.Name("pigeonOpenFileBrowser")
     /// Open the Git workspace for the selected tab's repository.
     static let pigeonOpenGit = Notification.Name("pigeonOpenGit")
+    /// Open the agent message history (cmd+L) for the selected tab.
+    static let pigeonOpenMessageHistory = Notification.Name("pigeonOpenMessageHistory")
 }
 
 /// The command palette: a fuzzy-searchable list over every open tab and
