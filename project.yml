@@ -20,6 +20,9 @@ packages:
   SwiftGitX:
     url: https://github.com/ibrahimcetin/SwiftGitX
     exactVersion: 0.4.0
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: 2.9.6
 
 targets:
   Pigeon:
@@ -42,6 +45,8 @@ targets:
       # libgit2 1.9 wrapper (status/diff/patch/log/commit/...) for the
       # built-in Git view.
       - package: SwiftGitX
+      # In-app self-update (non-App-Store): appcast + EdDSA signatures.
+      - package: Sparkle
     info:
       path: Sources/Pigeon/Info.plist
       properties:
@@ -50,8 +55,20 @@ targets:
         LSApplicationCategoryType: public.app-category.developer-tools
         NSHighResolutionCapable: true
         NSPrincipalClass: NSApplication
+        # Sparkle: update feed + EdDSA public key (private key lives only
+        # in GitHub secrets; see ~/.config/pigeon-dev-secrets/).
+        SUFeedURL: https://github.com/ahpxex/pigeon/releases/latest/download/appcast.xml
+        SUPublicEDKey: rNazB3r6n926/1wN4tyQ4uVCf4g1Te/pjY0OqGzSAZM=
+        SUEnableAutomaticChecks: true
+        SUScheduledCheckInterval: 86400
+        # Version injected at build time (CI passes MARKETING_VERSION from
+        # the tag; local builds default in settings below).
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
     settings:
       base:
+        MARKETING_VERSION: 0.1.0
+        CURRENT_PROJECT_VERSION: 1
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         # libghostty statically links C++ dependencies (harfbuzz, etc.)
         OTHER_LDFLAGS: "-lstdc++"

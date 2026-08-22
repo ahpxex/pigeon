@@ -26,6 +26,13 @@ private struct PigeonCommands: Commands {
     @Environment(\.openWindow) private var openWindow
 
     var body: some Commands {
+        CommandGroup(after: .appInfo) {
+            Button("Check for Updates…") {
+                Updater.checkForUpdates()
+            }
+            .keyboardShortcut("u", modifiers: [.command, .option])
+            .disabled(!Updater.canCheckForUpdates)
+        }
         CommandGroup(replacing: .newItem) {
             Button("New Window") {
                 openWindow(id: "main")

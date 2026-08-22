@@ -12,6 +12,7 @@ import Foundation
 /// a Release build always behaves as production no matter how it's run.
 enum AppVariant {
     static let isDev = Bundle.main.bundleIdentifier?.hasSuffix(".dev") == true
+    static let isProduction = !isDev
 
     /// This variant's config directory: ~/.config/pigeon for production,
     /// ~/.config/pigeon-dev for the dev build.

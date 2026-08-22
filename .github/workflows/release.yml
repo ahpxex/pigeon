@@ -1,0 +1,106 @@
+name: Release
+
+# Tag-driven release pipeline: push a vX.Y.Z tag, get a signed GitHub
+# Release with the zipped app and a Sparkle appcast. In-app updates
+# (Settings → Updates / ⌥⌘U) read appcast.xml from
+# releases/latest/download — no App Store involved.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Version from tag
+        id: ver
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          echo "version=$TAG" >> "$GITHUB_OUTPUT"
+          echo "build=${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+
+      - name: Install zig 0.14 (Ghostty v1.2.3 toolchain)
+        run: |
+          brew install zig@0.14
+          echo "/opt/homebrew/opt/zig@0.14/bin" >> "$GITHUB_PATH"
+
+      - name: Build libghostty + deps, generate project
+        run: |
+          scripts/fetch-ghostty-deps.sh
+          scripts/build-ghostty.sh
+          xcodegen generate
+
+      - name: Import signing identity
+        env:
+          PIGEON_SIGNING_P12: ${{ secrets.PIGEON_SIGNING_P12 }}
+          PIGEON_SIGNING_PASSWORD: ${{ secrets.PIGEON_SIGNING_PASSWORD }}
+        run: |
+          # Local self-signed identity (same one local builds use) so
+          # the released binary's code identity stays stable. Without
+          # the secret, the build falls back to ad-hoc signing — Sparkle
+          # integrity still holds via EdDSA.
+          if [ -z "$PIGEON_SIGNING_P12" ]; then
+            echo "No signing secret; continuing with ad-hoc identity"
+            exit 0
+          fi
+          echo "$PIGEON_SIGNING_P12" | base64 --decode > identity.p12
+          security create-keychain -p build build.keychain-db
+          security default-keychain -s build.keychain-db
+          security unlock-keychain -p build build.keychain-db
+          security import identity.p12 -k build.keychain-db \
+            -P "$PIGEON_SIGNING_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s \
+            -k build build.keychain-db
+          security find-identity -v -p codesigning
+
+      - name: Build Release app
+        run: |
+          IDENTITY="Pigeon Dev"
+          if ! security find-identity -v -p codesigning | grep -q "Pigeon Dev"; then
+            IDENTITY="-"
+          fi
+          xcodebuild -project Pigeon.xcodeproj -scheme Pigeon \
+            -configuration Release -derivedDataPath build \
+            CODE_SIGN_IDENTITY="$IDENTITY" CODE_SIGNING_REQUIRED=NO \
+            MARKETING_VERSION=${{ steps.ver.outputs.version }} \
+            CURRENT_PROJECT_VERSION=${{ steps.ver.outputs.build }} \
+            build
+          # (Re)sign with whatever identity we have; Sparkle's EdDSA
+          # guarantees update integrity regardless.
+          codesign --force --deep --sign "$IDENTITY" \
+            "build/Build/Products/Release/Pigeon.app" || \
+          codesign --force --deep --sign - \
+            "build/Build/Products/Release/Pigeon.app"
+
+      - name: Zip + appcast
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          VERSION=${{ steps.ver.outputs.version }}
+          BUILD=${{ steps.ver.outputs.build }}
+          cd build/Build/Products/Release
+          # ditto preserves everything codesign cares about.
+          ditto -c -k --keepParent Pigeon.app "Pigeon-${VERSION}.zip"
+          ASSET_URL="https://github.com/ahpxex/pigeon/releases/download/v${VERSION}/Pigeon-${VERSION}.zip"
+          cd -
+          /usr/bin/swift scripts/generate-appcast.swift \
+            "build/Build/Products/Release/Pigeon-${VERSION}.zip" \
+            "$VERSION" "$BUILD" "$ASSET_URL" "$SPARKLE_ED_PRIVATE_KEY"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=${{ steps.ver.outputs.version }}
+          gh release create "v${VERSION}" \
+            "build/Build/Products/Release/Pigeon-${VERSION}.zip" \
+            "appcast.xml" \
+            --title "Pigeon ${VERSION}" \
+            --generate-notes

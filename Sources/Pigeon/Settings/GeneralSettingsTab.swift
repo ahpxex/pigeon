@@ -2,6 +2,7 @@ import SwiftUI
 
 struct GeneralSettingsTab: View {
     @ObservedObject private var settings = AppSettings.shared
+    @State private var autoChecks = Updater.automaticallyChecks
 
     var body: some View {
         Form {
@@ -27,6 +28,24 @@ struct GeneralSettingsTab: View {
                     ForEach(TabIcon.categories) { category in
                         Text(category.name).tag(String?.some(category.name))
                     }
+                }
+            }
+
+            if Updater.canCheckForUpdates {
+                Section("Updates") {
+                    HStack {
+                        Button("Check for Updates…") {
+                            Updater.checkForUpdates()
+                        }
+                        Spacer()
+                    }
+                    Toggle("Check automatically", isOn: $autoChecks)
+                        .onChange(of: autoChecks) { value in
+                            Updater.automaticallyChecks = value
+                        }
+                    Text("Updates install in place from the appcast feed — no App Store. The dev build doesn’t self-update; pull and rebuild it.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
         }
