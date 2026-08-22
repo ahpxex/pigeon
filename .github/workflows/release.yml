@@ -39,7 +39,7 @@ jobs:
           git clone --depth 1 --branch "$GHOSTTY_TAG" \
             https://github.com/ghostty-org/ghostty.git vendor/ghostty
           for patch in patches/*.patch; do
-            git -C vendor/ghostty apply "$patch"
+            git apply --directory=vendor/ghostty "$patch"
           done
           scripts/fetch-ghostty-deps.sh
           scripts/build-ghostty.sh
