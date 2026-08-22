@@ -10,6 +10,14 @@ settings:
     SWIFT_VERSION: "5.9"
     MACOSX_DEPLOYMENT_TARGET: "13.0"
 
+packages:
+  Highlightr:
+    url: https://github.com/raspu/Highlightr
+    exactVersion: 2.3.0
+  MarkdownUI:
+    url: https://github.com/gonzalezreal/swift-markdown-ui
+    branch: main
+
 targets:
   Pigeon:
     type: application
@@ -21,6 +29,12 @@ targets:
       # Static library xcframework, so no embedding.
       - framework: vendor/ghostty/macos/GhosttyKit.xcframework
         embed: false
+      # highlight.js wrapper: syntax highlighting for the file browser's
+      # code preview (185+ languages, bundled themes, fully offline).
+      - package: Highlightr
+      # Full CommonMark rendering (tables, task lists, blockquotes,
+      # images) for the file browser's markdown preview.
+      - package: MarkdownUI
     info:
       path: Sources/Pigeon/Info.plist
       properties:

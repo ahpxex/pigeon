@@ -1,18 +1,22 @@
 import AppKit
+import MarkdownUI
 import SwiftUI
 
 /// File browser opened from the command palette's "Browse Files"
 /// action: a lazily-expanded directory tree on the left (starting with
 /// the *contents* of the terminal's working directory — no parent row),
-/// a preview pane on the right for selected files. Text files render as
-/// monospaced text (first 256 KB); images render inline; anything with
-/// NUL bytes up front shows as binary.
+/// a preview pane on the right. Code files get highlight.js syntax
+/// colors (Highlightr), markdown renders as styled text, images show
+/// inline; everything is line-lazy so big files stay smooth.
 struct FileBrowser: View {
     @Environment(\.dismiss) private var dismiss
 
     /// Root of the tree: the working directory of the tab that opened
     /// the palette.
     let rootURL: URL
+    /// Sheet size, derived from the presenting window (proportional,
+    /// slightly smaller, centered).
+    var preferredSize: CGSize = CGSize(width: 720, height: 520)
 
     @StateObject private var selection = FileSelection()
 
@@ -44,11 +48,19 @@ struct FileBrowser: View {
 
                 Divider()
 
-                FilePreview(url: selection.url)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                Group {
+                    if let url = selection.url {
+                        FilePreview(url: url)
+                    } else {
+                        EmptyHint(icon: "doc.text.magnifyingglass",
+                                  title: "No file selected",
+                                  subtitle: "Pick a file from the tree to preview it")
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .frame(minWidth: 640, minHeight: 420)
+        .frame(width: preferredSize.width, height: preferredSize.height)
     }
 }
 
@@ -214,52 +226,43 @@ private struct EmptyHint: View {
     }
 }
 
-/// Right-hand pane: renders whatever is selected.
+/// Right-hand pane: renders whatever is selected. Loading (decode +
+/// highlight) happens on a background task; rows render lazily so a
+/// 256 KB file never beachballs the browser.
 private struct FilePreview: View {
-    let url: URL?
-
-    var body: some View {
-        Group {
-            if let url {
-                PreviewContent(url: url)
-            } else {
-                EmptyHint(icon: "doc.text.magnifyingglass", title: "No file selected",
-                          subtitle: "Pick a file from the tree to preview it")
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-}
-
-private struct PreviewContent: View {
     let url: URL
-    @State private var content: PreviewBody?
+
+    @State private var preview: PreviewBody?
 
     enum PreviewBody {
-        case text(String)
+        case plain([NSAttributedString])
+        case code([NSAttributedString], truncated: Bool)
+        case markdown(String)
         case image(NSImage)
-        case binary(size: Int64)
+        case binary(Int64)
     }
 
     var body: some View {
         Group {
-            switch content {
+            switch preview {
             case nil:
-                ProgressView()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            case .text(let text):
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            case .plain(let lines):
+                lineList(lines, truncated: false)
+            case .code(let lines, let truncated):
+                lineList(lines, truncated: truncated)
+            case .markdown(let source):
                 ScrollView {
-                    Text(text)
-                        .font(.system(size: 12, design: .monospaced))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(12)
+                    Markdown(source)
+                        .markdownTheme(.gitHub)
+                        .markdownCodeSyntaxHighlighter(HighlightrCodeSyntaxHighlighter())
                         .textSelection(.enabled)
+                        .padding(16)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             case .image(let image):
                 ScrollView([.horizontal, .vertical]) {
-                    Image(nsImage: image)
-                        .interpolation(.high)
-                        .padding(12)
+                    Image(nsImage: image).interpolation(.high).padding(12)
                 }
             case .binary(let size):
                 EmptyHint(icon: "doc.badge.ellipsis", title: "Binary file",
@@ -267,65 +270,84 @@ private struct PreviewContent: View {
             }
         }
         .overlay(alignment: .bottom) {
-            VStack {
-                Text(url.lastPathComponent)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(.ultraThinMaterial, in: Capsule())
-                    .padding(8)
-            }
-            .frame(maxWidth: .infinity, alignment: .trailing)
+            Text(url.lastPathComponent)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(.ultraThinMaterial, in: Capsule())
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .trailing)
         }
-        .onChange(of: url) { _ in content = nil }
+        .onChange(of: url) { _ in preview = nil }
         .task(id: url) { await load() }
+    }
+
+    private func lineList(_ lines: [NSAttributedString], truncated: Bool) -> some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                    Text(AttributedString(line))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 0.5)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                if truncated {
+                    Text("… truncated — file continues")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .padding(12)
+                }
+            }
+            .padding(.vertical, 8)
+            .textSelection(.enabled)
+        }
     }
 
     private func load() async {
         let url = self.url
-        let values = try? url.resourceValues(forKeys: [.typeIdentifierKey])
-        let typeID = values?.typeIdentifier ?? ""
+        let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        let typeID = (try? url.resourceValues(forKeys: [.typeIdentifierKey]).typeIdentifier) ?? ""
         let isImage = typeID.hasPrefix("public.image")
             || ["png", "jpg", "jpeg", "gif", "webp", "bmp", "tiff", "svg", "ico"]
                 .contains(url.pathExtension.lowercased())
 
         if isImage, let image = NSImage(contentsOf: url) {
-            content = .image(image)
+            preview = .image(image)
             return
         }
 
         guard let data = try? Data(contentsOf: url) else {
-            content = .text("(unreadable)")
+            preview = .plain([NSAttributedString(string: "(unreadable)")])
             return
         }
-        // Sniff text: a NUL byte in the first 8 KB marks it binary.
-        // (Not UTF-8 decodability: a CJK character can straddle the
-        // sniff boundary and make the prefix technically invalid.)
         if data.prefix(8192).contains(0) {
-            content = .binary(size: Int64(data.count))
+            preview = .binary(Int64(data.count))
             return
         }
-        let limit = 256 * 1024
-        // Same boundary risk when truncating: cut at a UTF-8 character
-        // boundary, then decode with lossy replacement for anything
-        // still broken.
-        var slice = data.prefix(limit)
-        while !slice.isEmpty {
-            if String(data: slice, encoding: .utf8) != nil { break }
-            slice = slice.dropLast(1)
-            // A UTF-8 character is at most 4 bytes; giving up after 4
-            // means the file itself isn't valid UTF-8.
-            if data.count > limit, slice.count < limit - 4 {
-                content = .binary(size: Int64(data.count))
-                return
+
+        // Everything below is CPU work on strings — keep it off main.
+        let rendered: PreviewBody = await Task.detached(priority: .userInitiated) {
+            let limit = 256 * 1024
+            var slice = data.prefix(limit)
+            while !slice.isEmpty, String(data: slice, encoding: .utf8) == nil {
+                slice = slice.dropLast(1)
             }
-        }
-        var text = String(data: slice, encoding: .utf8)
-            ?? String(decoding: slice, as: UTF8.self)
-        if data.count > slice.count {
-            text += "\n\n… truncated (\(ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file)) total)"
-        }
-        content = .text(text)
+            let text = String(data: slice, encoding: .utf8)
+                ?? String(decoding: slice, as: UTF8.self)
+            let truncated = data.count > slice.count
+
+            let isMarkdown = ["md", "markdown"].contains(url.pathExtension.lowercased())
+            if isMarkdown {
+                return PreviewBody.markdown(text)
+            }
+            if let lines = await MainActor.run(body: {
+                SyntaxHighlighter.attributedLines(for: text, fileURL: url)
+            }) {
+                return .code(lines, truncated: truncated)
+            }
+            return .plain(text.components(separatedBy: "\n").map(NSAttributedString.init))
+        }.value
+        preview = rendered
     }
 }

@@ -57,6 +57,9 @@ private struct WorkspaceLayout: View {
 
     @State private var paletteOpen = false
     @State private var browserURL: URL?
+    /// Browser sheet size at open time, proportional to the window
+    /// (slightly smaller, so the sheet reads as "of this window").
+    @State private var browserSize = CGSize(width: 720, height: 520)
 
     var body: some View {
         HStack(spacing: 0) {
@@ -134,7 +137,7 @@ private struct WorkspaceLayout: View {
             get: { browserURL != nil },
             set: { if !$0 { browserURL = nil } })) {
             if let url = browserURL {
-                FileBrowser(rootURL: url)
+                FileBrowser(rootURL: url, preferredSize: browserSize)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .pigeonOpenPalette)) { _ in
@@ -142,6 +145,7 @@ private struct WorkspaceLayout: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .pigeonOpenFileBrowser)) { note in
             browserURL = note.userInfo?["url"] as? URL
+            browserSize = Self.browserSize(for: tabManager.window)
         }
         .ignoresSafeArea()
         .frame(minWidth: 400, minHeight: 300)
@@ -163,6 +167,17 @@ private struct PaletteOverlay: View {
                 .padding(.top, 90)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
+    }
+}
+
+extension WorkspaceLayout {
+    /// ~3/4 of the window, clamped to sane minimums; the sheet centers
+    /// itself over its presenting window.
+    static func browserSize(for window: NSWindow?) -> CGSize {
+        guard let frame = window?.frame else { return CGSize(width: 720, height: 520) }
+        return CGSize(
+            width: max(640, frame.width * 0.75),
+            height: max(420, frame.height * 0.78))
     }
 }
 
