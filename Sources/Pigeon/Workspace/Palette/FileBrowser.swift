@@ -20,6 +20,12 @@ struct FileBrowser: View {
     /// Left pane width; live-adjusted by the divider drag. Defaults to
     /// roughly a third of the sheet — narrow tree, wide preview.
     @State private var treeWidth: CGFloat?
+    /// Search field state: when non-nil, the tree shows matching files
+    /// anywhere under the root (recursive) instead of the directory tree.
+    @State private var searchQuery: String?
+    /// Search hits for the current query (computed off-main; set when
+    /// done). Reset whenever the query changes.
+    @State private var searchMatches: [FileNode]?
 
     private var effectiveTreeWidth: CGFloat {
         treeWidth ?? min(260, preferredSize.width * 0.32)
@@ -46,10 +52,38 @@ struct FileBrowser: View {
             Divider()
 
             HStack(spacing: 0) {
-                ScrollView {
-                    FileTreeLevel(directory: rootURL, depth: 0, selection: selection)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.vertical, 6)
+                VStack(spacing: 0) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                        TextField("Search", text: searchBinding)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 12))
+                        if searchQuery != nil {
+                            Button {
+                                searchQuery = nil
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    Divider()
+                    ScrollView {
+                        if let results = searchMatches, searchQuery != nil {
+                            SearchResultList(results: results, selection: selection)
+                                .padding(.vertical, 6)
+                        } else {
+                            FileTreeLevel(directory: rootURL, depth: 0, selection: selection)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.vertical, 6)
+                        }
+                    }
                 }
                 .frame(width: effectiveTreeWidth)
 
@@ -100,6 +134,74 @@ struct FileBrowser: View {
             .coordinateSpace(name: "pigeon-split")
         }
         .frame(width: preferredSize.width, height: preferredSize.height)
+    }
+
+    private var searchBinding: Binding<String> {
+        Binding(
+            get: { searchQuery ?? "" },
+            set: { newValue in
+                searchQuery = newValue.isEmpty ? nil : newValue
+                searchMatches = nil
+                scheduleSearch()
+            })
+    }
+
+    /// Debounced recursive search, off the main thread: a big tree
+    /// mustn't stall typing.
+    private func scheduleSearch() {
+        searchTask?.cancel()
+        let query = searchQuery?.lowercased()
+        guard var query, !query.isEmpty else { return }
+        while query.last == " " { query.removeLast() }
+        let root = rootURL
+        searchTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            guard !Task.isCancelled else { return }
+            let matches = await Task.detached(priority: .userInitiated) {
+                Self.searchSync(root, for: query)
+            }.value
+            guard !Task.isCancelled else { return }
+            searchMatches = matches
+        }
+    }
+
+    @State private var searchTask: Task<Void, Never>?
+
+    /// Synchronous recursive walk (runs on the detached task).
+    private static func searchSync(_ root: URL, for query: String) -> [FileNode] {
+        var matches: [FileNode] = []
+        search(root, for: query, into: &matches, limit: 500)
+        return matches
+    }
+
+    /// Depth-first walk collecting files/directories whose name contains
+    /// the query. Hidden files skipped, symlink cycles broken by a depth
+    /// cap.
+    private static func search(
+        _ directory: URL, for query: String,
+        into matches: inout [FileNode], limit: Int, depth: Int = 0
+    ) {
+        guard matches.count < limit, depth < 12 else { return }
+        guard let entries = try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles])
+        else { return }
+        for entry in entries.sorted(by: {
+            $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent)
+                == .orderedAscending
+        }) {
+            guard matches.count < limit else { return }
+            var isDir: ObjCBool = false
+            let isDirectory = FileManager.default.fileExists(
+                atPath: entry.path, isDirectory: &isDir) && isDir.boolValue
+            if entry.lastPathComponent.lowercased().contains(query) {
+                matches.append(FileNode(url: entry, isDirectory: isDirectory))
+            }
+            if isDirectory {
+                search(entry, for: query, into: &matches, limit: limit, depth: depth + 1)
+            }
+        }
     }
 }
 
@@ -238,11 +340,93 @@ private struct FileTreeRow: View {
                 selection.select(node.url)
             }
         }
+        .contextMenu { FileContextMenu(url: node.url).content }
     }
 }
 
 private func indent(_ depth: Int) -> CGFloat {
     CGFloat(depth) * 14 + 6
+}
+
+/// Flat list of search hits: relative-path subtitles, click selects.
+private struct SearchResultList: View {
+    let results: [FileNode]
+    @ObservedObject var selection: FileSelection
+
+    var body: some View {
+        LazyVStack(alignment: .leading, spacing: 0) {
+            ForEach(results) { node in
+                HStack(spacing: 6) {
+                    Image(systemName: node.isDirectory ? "folder.fill" : "doc")
+                        .font(.system(size: 11))
+                        .foregroundStyle(node.isDirectory ? Color.accentColor : .secondary)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(node.displayName)
+                            .font(.system(size: 12))
+                            .lineLimit(1)
+                        Text(node.url.path)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                            .truncationMode(.head)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(
+                    RoundedRectangle(cornerRadius: 5)
+                        .fill(selection.url == node.url
+                              ? Color.accentColor.opacity(0.18) : Color.clear)
+                )
+                .contentShape(Rectangle())
+                .onTapGesture { selection.select(node.url) }
+                .contextMenu { FileContextMenu(url: node.url).content }
+            }
+        }
+    }
+}
+
+/// Open-with targets for the context menu.
+enum FileOpenActions {
+    /// VS Code's CLI lives in /usr/local/bin (Intel) or
+    /// /opt/homebrew/bin (Apple Silicon); resolve whatever exists.
+    private static var codeBinary: String? {
+        ["/usr/local/bin/code", "/opt/homebrew/bin/code"]
+            .first { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+
+    static var hasVSCode: Bool { codeBinary != nil }
+
+    static func openInVSCode(_ url: URL) {
+        guard let code = codeBinary else { return }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: code)
+        process.arguments = [url.path]
+        try? process.run()
+    }
+
+    static func openWithDefaultApp(_ url: URL) {
+        NSWorkspace.shared.open(url)
+    }
+
+    /// Reveal in Finder — the natural third leg of an open-with menu.
+    static func revealInFinder(_ url: URL) {
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+}
+
+/// Context menu pieces shared by tree rows and search results.
+struct FileContextMenu {
+    let url: URL
+
+    @ViewBuilder var content: some View {
+        if FileOpenActions.hasVSCode {
+            Button("Open in VS Code") { FileOpenActions.openInVSCode(url) }
+        }
+        Button("Open With…") { FileOpenActions.openWithDefaultApp(url) }
+        Button("Reveal in Finder") { FileOpenActions.revealInFinder(url) }
+    }
 }
 
 /// macOS-13-compatible placeholder (ContentUnavailableView is 14+).
