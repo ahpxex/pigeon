@@ -58,6 +58,20 @@ private struct PigeonCommands: Commands {
                 NotificationCenter.default.post(name: .pigeonOpenPalette, object: nil)
             }
             .keyboardShortcut("k", modifiers: .command)
+
+            // cmd+J skips the palette and opens the file browser at the
+            // selected tab's working directory directly.
+            Button("Browse Files") {
+                Task { @MainActor in
+                    guard let tab = TabManager.forKeyWindow?.selectedTab else { return }
+                    let url = tab.surfaceView.pwd.map(URL.init(fileURLWithPath:))
+                        ?? FileManager.default.homeDirectoryForCurrentUser
+                    NotificationCenter.default.post(
+                        name: .pigeonOpenFileBrowser, object: nil,
+                        userInfo: ["url": url])
+                }
+            }
+            .keyboardShortcut("j", modifiers: .command)
         }
         CommandGroup(after: .sidebar) {
             Button("Toggle Sidebar") {

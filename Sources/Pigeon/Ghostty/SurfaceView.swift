@@ -530,15 +530,23 @@ extension Ghostty {
             }
 
             // cmd+` and cmd+K open the command palette from the terminal
-            // surface. The menu owns ⌘K; ⌘` is intercepted here because
-            // the system otherwise consumes it as "next window".
+            // surface; cmd+J opens the file browser at the tab's cwd.
+            // The menu owns these too, but the surface path guarantees
+            // they work while the terminal has focus (and ⌘` would
+            // otherwise be taken by the system as "next window").
             if event.modifierFlags.contains(.command),
                event.modifierFlags.intersection(
                    [.shift, .control, .option]).isEmpty,
-               let chars = event.charactersIgnoringModifiers,
-               chars == "`" || chars == "k" || chars == "K" {
-                NotificationCenter.default.post(name: .pigeonOpenPalette, object: self)
-                return true
+               let chars = event.charactersIgnoringModifiers {
+                if chars == "`" || chars == "k" || chars == "K" {
+                    NotificationCenter.default.post(name: .pigeonOpenPalette, object: self)
+                    return true
+                }
+                if chars == "j" || chars == "J" {
+                    NotificationCenter.default.post(
+                        name: .pigeonOpenFileBrowser, object: self)
+                    return true
+                }
             }
 
             let key = event.ghosttyKeyEvent(GHOSTTY_ACTION_PRESS)

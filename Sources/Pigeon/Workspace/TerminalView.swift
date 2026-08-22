@@ -144,7 +144,12 @@ private struct WorkspaceLayout: View {
             paletteOpen.toggle()
         }
         .onReceive(NotificationCenter.default.publisher(for: .pigeonOpenFileBrowser)) { note in
+            // The palette action carries an explicit URL; the surface's
+            // cmd+J shortcut doesn't know the tab's pwd, so default to
+            // the selected tab's working directory here.
             browserURL = note.userInfo?["url"] as? URL
+                ?? tabManager.selectedTab?.surfaceView.pwd.map(URL.init(fileURLWithPath:))
+                ?? FileManager.default.homeDirectoryForCurrentUser
             browserSize = Self.browserSize(for: tabManager.window)
         }
         .ignoresSafeArea()
