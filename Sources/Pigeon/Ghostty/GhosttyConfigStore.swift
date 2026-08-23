@@ -12,6 +12,16 @@ extension Ghostty {
     /// (an earlier HOME/XDG env swap broke non-deterministically because
     /// Foundation caches NSSearchPath results).
     enum ConfigStore {
+        private static let defaultsMarker = "# >>> pigeon-defaults-v1"
+        private static let defaultsBlock = """
+        # >>> pigeon-defaults-v1
+        # Normal macOS clipboard behavior: selecting text does not copy it.
+        # Terminal programs must ask before replacing the system clipboard.
+        copy-on-select = false
+        clipboard-write = ask
+        # <<< pigeon-defaults-v1
+        """
+
         /// The file users edit. Per app variant: production reads
         /// ~/.config/pigeon/config, the dev build ~/.config/pigeon-dev/config.
         static var configFileURL: URL {
@@ -42,7 +52,10 @@ extension Ghostty {
         /// Create the config file on first run.
         static func prepare() {
             let fm = FileManager.default
-            guard !fm.fileExists(atPath: configFileURL.path) else { return }
+            if fm.fileExists(atPath: configFileURL.path) {
+                ensurePigeonDefaults()
+                return
+            }
 
             try? fm.createDirectory(
                 at: configFileURL.deletingLastPathComponent(),
@@ -52,6 +65,8 @@ extension Ghostty {
             # Same format as Ghostty (https://ghostty.org/docs/config),
             # but this file belongs to Pigeon only — Ghostty.app never
             # reads it, and Pigeon never reads Ghostty's config.
+
+            \(defaultsBlock)
 
             """
             if let source = seedConfigURL,
@@ -63,6 +78,27 @@ extension Ghostty {
                 """
             }
             try? contents.write(to: configFileURL, atomically: true, encoding: .utf8)
+        }
+
+        /// Existing configs predate Pigeon's clipboard defaults. Prepend
+        /// them once so every hand-written or imported option later in the
+        /// file still wins under Ghostty's last-value-wins semantics.
+        private static func ensurePigeonDefaults() {
+            guard var contents = try? String(
+                contentsOf: configFileURL, encoding: .utf8),
+                !contents.contains(defaultsMarker)
+            else { return }
+            if !contents.isEmpty, !contents.hasSuffix("\n") {
+                contents += "\n"
+            }
+            let updated = defaultsBlock + "\n\n" + contents
+            do {
+                try updated.write(
+                    to: configFileURL, atomically: true, encoding: .utf8)
+            } catch {
+                Ghostty.logger.error(
+                    "failed to add Pigeon clipboard defaults: \(error.localizedDescription)")
+            }
         }
 
         /// Build a finalized ghostty config from Pigeon's file.
