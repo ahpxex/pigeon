@@ -59,6 +59,7 @@ private struct WorkspaceLayout: View {
     @State private var paletteOpen = false
     @State private var historyOpen = false
     @State private var browserURL: URL?
+    @State private var browserPreviewURL: URL?
     /// Browser sheet size at open time, proportional to the window
     /// (slightly smaller, so the sheet reads as "of this window").
     @State private var browserSize = CGSize(width: 720, height: 520)
@@ -100,9 +101,9 @@ private struct WorkspaceLayout: View {
             .overlay(alignment: .top) {
                 // Agent message history (cmd+L): palette-style overlay,
                 // click/enter to jump the scrollback to that message.
-                if historyOpen, let selected = tabManager.selectedTab,
-                   let outline = AgentOutlineStore.outlineIfAny(
-                       for: selected.surfaceView.agentSurfaceID) {
+                if historyOpen, let selected = tabManager.selectedTab {
+                    let outline = AgentOutlineStore.outline(
+                        for: selected.surfaceView.agentSurfaceID)
                     ZStack {
                         Color.black.opacity(0.28)
                             .ignoresSafeArea()
@@ -162,27 +163,40 @@ private struct WorkspaceLayout: View {
         }
         .sheet(isPresented: Binding(
             get: { browserURL != nil },
-            set: { if !$0 { browserURL = nil } })) {
+            set: {
+                if !$0 {
+                    browserURL = nil
+                    browserPreviewURL = nil
+                }
+            })) {
             if let url = browserURL {
-                FileBrowser(rootURL: url, preferredSize: browserSize)
+                FileBrowser(
+                    rootURL: url,
+                    preferredSize: browserSize,
+                    initialSelectionURL: browserPreviewURL)
             }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .pigeonOpenPalette)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: .pigeonOpenPalette)) { note in
+            guard handles(note) else { return }
             paletteOpen.toggle()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .pigeonOpenMessageHistory)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: .pigeonOpenMessageHistory)) { note in
+            guard handles(note) else { return }
             historyOpen.toggle()
         }
         .onReceive(NotificationCenter.default.publisher(for: .pigeonOpenFileBrowser)) { note in
+            guard handles(note) else { return }
             // The palette action carries an explicit URL; the surface's
             // cmd+J shortcut doesn't know the tab's pwd, so default to
             // the selected tab's working directory here.
             browserURL = note.userInfo?["url"] as? URL
                 ?? tabManager.selectedTab?.surfaceView.pwd.map(URL.init(fileURLWithPath:))
                 ?? FileManager.default.homeDirectoryForCurrentUser
+            browserPreviewURL = note.userInfo?["previewURL"] as? URL
             browserSize = Self.browserSize(for: tabManager.window)
         }
-        .onReceive(NotificationCenter.default.publisher(for: .pigeonOpenGit)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: .pigeonOpenGit)) { note in
+            guard handles(note) else { return }
             // Root at the selected tab's repository, walking up from its
             // cwd; not a repo (or no tab) = ignore.
             if let url = tabManager.selectedTab?.surfaceView.pwd
@@ -220,9 +234,20 @@ private struct PaletteOverlay: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
     }
+
 }
 
 extension WorkspaceLayout {
+    /// UI-local commands are broadcast through NotificationCenter, but
+    /// their presentation belongs to one window. Surface shortcuts carry
+    /// their originating view; menu commands target the key window.
+    private func handles(_ notification: Notification) -> Bool {
+        if let surface = notification.object as? Ghostty.SurfaceView {
+            return tabManager.tabs.contains { $0.surfaceView === surface }
+        }
+        return TabManager.forKeyWindow === tabManager
+    }
+
     /// ~3/4 of the window, clamped to sane minimums; the sheet centers
     /// itself over its presenting window.
     static func browserSize(for window: NSWindow?) -> CGSize {

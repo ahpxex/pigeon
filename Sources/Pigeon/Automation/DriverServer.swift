@@ -33,6 +33,8 @@ import SwiftUI
 ///   POST /agent/provider    <- {name, baseURL, model, apiKey?} upsert + set default
 ///   POST /agent/default     <- {name, model?} switch default only, no mutation
 ///   POST /agent/provider/remove <- {name} (custom providers only)
+///   POST /browser/open      <- {root, preview?} open browser, optionally preview a file
+///   POST /history/toggle    -> toggle selected tab's message history overlay
 final class DriverServer {
     static let shared = DriverServer()
 
@@ -258,6 +260,33 @@ final class DriverServer {
                   let target = TabManager.all.first(where: { $0.window?.windowNumber == number })
             else { return HTTPResponse(status: 404, error: "window not found") }
             target.window?.makeKeyAndOrderFront(nil)
+            return HTTPResponse(json: ["ok": true])
+
+        case ("POST", "/browser/open"):
+            guard let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any],
+                  let rootPath = json["root"] as? String
+            else { return HTTPResponse(status: 400, error: "need {root, preview?}") }
+            let root = URL(fileURLWithPath: rootPath).standardizedFileURL
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: root.path, isDirectory: &isDirectory),
+                  isDirectory.boolValue
+            else { return HTTPResponse(status: 400, error: "root is not a directory") }
+
+            var userInfo: [String: URL] = ["url": root]
+            if let previewPath = json["preview"] as? String {
+                let preview = URL(fileURLWithPath: previewPath).standardizedFileURL
+                guard FileManager.default.fileExists(atPath: preview.path) else {
+                    return HTTPResponse(status: 400, error: "preview file not found")
+                }
+                userInfo["previewURL"] = preview
+            }
+            NotificationCenter.default.post(
+                name: .pigeonOpenFileBrowser, object: nil, userInfo: userInfo)
+            return HTTPResponse(json: ["ok": true])
+
+        case ("POST", "/history/toggle"):
+            NotificationCenter.default.post(
+                name: .pigeonOpenMessageHistory, object: nil)
             return HTTPResponse(json: ["ok": true])
 
         case ("POST", "/tabs/new"):
@@ -696,7 +725,18 @@ final class DriverServer {
             "theme": kernel.themeID as Any,
             "cursorStyle": kernel.cursorStyle.rawValue,
             "backgroundOpacity": kernel.backgroundOpacity,
+            "copyOnSelect": configEnum("copy-on-select") as Any,
+            "clipboardWrite": configEnum("clipboard-write") as Any,
         ]
+    }
+
+    private func configEnum(_ name: String) -> String? {
+        guard let config = Ghostty.App.shared.config else { return nil }
+        var value: UnsafePointer<CChar>? = nil
+        guard ghostty_config_get(config, &value, name, UInt(name.count)),
+              let value
+        else { return nil }
+        return String(cString: value)
     }
 
     @MainActor
