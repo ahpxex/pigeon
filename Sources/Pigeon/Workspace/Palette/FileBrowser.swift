@@ -69,7 +69,7 @@ enum PreviewFont {
         let url = Ghostty.ConfigStore.configFileURL
         let modDate = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
             .contentModificationDate
-        if let cached = cachedSpec, cachedSpecDate == modDate, let modDate {
+        if let cached = cachedSpec, cachedSpecDate == modDate, modDate != nil {
             return cached
         }
         var families: [String] = []
@@ -116,6 +116,7 @@ struct FileBrowser: View {
     /// Sheet size, derived from the presenting window (proportional,
     /// slightly smaller, centered).
     var preferredSize: CGSize = CGSize(width: 720, height: 520)
+    let initialSelectionURL: URL?
     /// Left pane width; live-adjusted by the divider drag. Defaults to
     /// roughly a third of the sheet — narrow tree, wide preview.
     @State private var treeWidth: CGFloat?
@@ -132,7 +133,19 @@ struct FileBrowser: View {
         treeWidth ?? min(260, preferredSize.width * 0.32)
     }
 
-    @StateObject private var selection = FileSelection()
+    @StateObject private var selection: FileSelection
+
+    init(
+        rootURL: URL,
+        preferredSize: CGSize = CGSize(width: 720, height: 520),
+        initialSelectionURL: URL? = nil
+    ) {
+        self.rootURL = rootURL
+        self.preferredSize = preferredSize
+        self.initialSelectionURL = initialSelectionURL
+        _selection = StateObject(
+            wrappedValue: FileSelection(url: initialSelectionURL))
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -277,14 +290,14 @@ struct FileBrowser: View {
     @State private var searchTask: Task<Void, Never>?
 
     /// fd binary, if installed.
-    private static var fdPath: String? {
+    nonisolated private static var fdPath: String? {
         ["/opt/homebrew/bin/fd", "/usr/local/bin/fd"]
             .first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
     /// Name-substring search via fd: dotfiles included, .gitignore
     /// respected (fd's default), files and directories, capped.
-    private static func fdSearch(_ query: String, root: URL) -> [FileNode] {
+    nonisolated private static func fdSearch(_ query: String, root: URL) -> [FileNode] {
         guard let fd = fdPath else { return [] }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: fd)
@@ -320,6 +333,10 @@ struct FileBrowser: View {
 @MainActor
 final class FileSelection: ObservableObject {
     @Published var url: URL?
+
+    init(url: URL? = nil) {
+        self.url = url
+    }
 
     func select(_ url: URL) {
         self.url = url
@@ -407,7 +424,7 @@ private struct FileTreeRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             row
-            if isExpanded, let children {
+            if isExpanded, children != nil {
                 FileTreeLevel(directory: node.url, depth: depth + 1, selection: selection)
             }
         }
@@ -570,6 +587,7 @@ private struct FilePreview: View, Equatable {
     let url: URL
 
     @State private var preview: PreviewBody?
+    @StateObject private var markdownHighlights = MarkdownHighlightStore()
 
     enum PreviewBody {
         case plain([NSAttributedString])
@@ -577,6 +595,10 @@ private struct FilePreview: View, Equatable {
         case markdown(String)
         case image(NSImage)
         case binary(Int64)
+    }
+
+    private struct LoadedImage: @unchecked Sendable {
+        let value: NSImage
     }
 
     var body: some View {
@@ -592,7 +614,8 @@ private struct FilePreview: View, Equatable {
                 ScrollView {
                     Markdown(source)
                         .markdownTheme(Self.terminalCodeTheme)
-                        .markdownCodeSyntaxHighlighter(MarkdownCodeHighlighter())
+                        .markdownCodeSyntaxHighlighter(
+                            MarkdownCodeHighlighter(store: markdownHighlights))
                         .textSelection(.enabled)
                         .padding(16)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -665,12 +688,26 @@ private struct FilePreview: View, Equatable {
             || ["png", "jpg", "jpeg", "gif", "webp", "bmp", "tiff", "svg", "ico"]
                 .contains(url.pathExtension.lowercased())
 
-        if isImage, let image = NSImage(contentsOf: url) {
-            preview = .image(image)
-            return
+        if isImage {
+            let image = await Task.detached(priority: .userInitiated) {
+                NSImage(contentsOf: url).map(LoadedImage.init)
+            }.value
+            if let image {
+                preview = .image(image.value)
+                return
+            }
         }
 
-        guard let data = try? Data(contentsOf: url) else {
+        // Read only what the preview can display, and do the file I/O off
+        // main. The previous Data(contentsOf:) loaded an arbitrarily large
+        // file on the UI actor before truncating it to 256 KB.
+        let limit = 256 * 1024
+        let loaded: Data? = await Task.detached(priority: .userInitiated, operation: {
+            guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+            defer { try? handle.close() }
+            return try? handle.read(upToCount: limit + 1)
+        }).value
+        guard let data = loaded else {
             preview = .plain([NSAttributedString(string: "(unreadable)")])
             return
         }
@@ -681,14 +718,19 @@ private struct FilePreview: View, Equatable {
 
         // Everything below is CPU work on strings — keep it off main.
         let rendered: PreviewBody = await Task.detached(priority: .userInitiated) {
-            let limit = 256 * 1024
             var slice = data.prefix(limit)
-            while !slice.isEmpty, String(data: slice, encoding: .utf8) == nil {
+            // A truncated UTF-8 scalar is at most four bytes. Trim only
+            // that partial tail; invalid bytes inside the file are decoded
+            // lossily instead of discarding the entire preview.
+            var attempts = 0
+            while !slice.isEmpty, String(data: slice, encoding: .utf8) == nil,
+                  data.count > limit, attempts < 4 {
                 slice = slice.dropLast(1)
+                attempts += 1
             }
             let text = String(data: slice, encoding: .utf8)
                 ?? String(decoding: slice, as: UTF8.self)
-            let truncated = data.count > slice.count
+            let truncated = data.count > limit || size > slice.count
 
             let isMarkdown = ["md", "markdown"].contains(url.pathExtension.lowercased())
             if isMarkdown {

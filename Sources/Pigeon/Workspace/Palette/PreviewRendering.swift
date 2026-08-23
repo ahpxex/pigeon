@@ -7,7 +7,6 @@ import SwiftUI
 /// HighlightSwift (highlight.js in an actor-isolated JSContext). Output
 /// carries colors only — HighlightSwift strips font attributes, so the
 /// terminal font applied by the caller always wins.
-@MainActor
 enum SyntaxHighlighter {
     private static let highlight = Highlight()
 
@@ -45,6 +44,7 @@ enum SyntaxHighlighter {
 
     /// GitHub theme matching the system appearance (the markdown preview
     /// uses the light gitHub theme on the light pane).
+    @MainActor
     private static var colors: HighlightColors {
         let dark = NSApp.effectiveAppearance.bestMatch(
             from: [.darkAqua, .aqua]) == .darkAqua
@@ -56,6 +56,15 @@ enum SyntaxHighlighter {
     static func attributedString(
         for text: String, language: String?
     ) async -> NSAttributedString? {
+        let currentColors = await colors
+        return await attributedString(
+            for: text, language: language, colors: currentColors)
+    }
+
+    static func attributedString(
+        for text: String, language: String?, colors: HighlightColors
+    ) async -> NSAttributedString? {
+        if text.isEmpty { return NSAttributedString(string: "") }
         do {
             let attributed: AttributedString
             if let language {
@@ -115,44 +124,69 @@ enum SyntaxHighlighter {
     }
 }
 
-/// Bridges HighlightSwift into MarkdownUI's (synchronous) code-block
-/// highlighter: blocks the calling thread on the HLJS actor. Markdown
-/// code blocks are small, and the actor never executes on main, so the
-/// brief block is safe.
+/// MarkdownUI's syntax-highlighter protocol is synchronous, while
+/// HighlightSwift is async. Cache blocks progressively: the first render
+/// returns plain text immediately, then publishes the highlighted result
+/// when the actor finishes. Never block the main actor waiting for async
+/// work — doing so deadlocks as soon as the async path needs main-actor
+/// state and freezes the entire app.
 @MainActor
-struct MarkdownCodeHighlighter: CodeSyntaxHighlighter {
-    func highlightCode(_ code: String, language: String?) -> Text {
-        guard let ns = blockingHighlight(code, language: language) else {
-            return Text(code)
+final class MarkdownHighlightStore: ObservableObject {
+    private struct Key: Hashable {
+        let code: String
+        let language: String?
+        let dark: Bool
+    }
+
+    private var cached: [Key: NSAttributedString] = [:]
+    private var pending: Set<Key> = []
+
+    func text(for code: String, language: String?) -> Text {
+        let dark = NSApp.effectiveAppearance.bestMatch(
+            from: [.darkAqua, .aqua]) == .darkAqua
+        let key = Key(code: code, language: language, dark: dark)
+        if let value = cached[key] { return Self.text(from: value) }
+
+        if !code.isEmpty, pending.insert(key).inserted {
+            let colors: HighlightColors = dark ? .dark(.github) : .light(.github)
+            Task { [weak self] in
+                let highlighted = await SyntaxHighlighter.attributedString(
+                    for: code, language: language, colors: colors)
+                    ?? NSAttributedString(string: code)
+                guard let self else { return }
+                self.pending.remove(key)
+                self.cached[key] = highlighted
+                self.objectWillChange.send()
+            }
         }
+
+        return Text(code)
+    }
+
+    private static func text(from attributed: NSAttributedString) -> Text {
         var segments: [Text] = []
-        let full = NSRange(location: 0, length: ns.length)
-        ns.enumerateAttributes(in: full) { attrs, range, _ in
-            let body = ns.attributedSubstring(from: range).string
+        let full = NSRange(location: 0, length: attributed.length)
+        attributed.enumerateAttributes(in: full) { attrs, range, _ in
+            let body = attributed.attributedSubstring(from: range).string
             var segment = Text(body)
             if let color = attrs[.foregroundColor] as? NSColor {
                 segment = segment.foregroundColor(Color(nsColor: color))
             }
             segments.append(segment)
         }
-        guard var result = segments.popLast() else { return Text(code) }
+        guard var result = segments.popLast() else { return Text(attributed.string) }
         while let next = segments.popLast() {
             result = next + result
         }
         return result
     }
+}
 
-    private func blockingHighlight(
-        _ code: String, language: String?
-    ) -> NSAttributedString? {
-        let semaphore = DispatchSemaphore(value: 0)
-        var result: NSAttributedString?
-        Task.detached(priority: .userInitiated) {
-            result = await SyntaxHighlighter.attributedString(
-                for: code, language: language)
-            semaphore.signal()
-        }
-        semaphore.wait()
-        return result
+@MainActor
+struct MarkdownCodeHighlighter: @preconcurrency CodeSyntaxHighlighter {
+    let store: MarkdownHighlightStore
+
+    func highlightCode(_ code: String, language: String?) -> Text {
+        store.text(for: code, language: language)
     }
 }
