@@ -20,9 +20,9 @@ final class AgentOutlineModel: ObservableObject {
 
     @Published private(set) var entries: [Entry] = []
 
-    /// Panel visibility is a property of the tab, but the outline lives
-    /// on the surface: sticky once the first entry arrives, cleared when
-    /// the surface returns to a shell prompt (agent session over).
+    /// Whether the current coding-agent session is still active. Message
+    /// entries outlive the session so cmd+L remains useful after the agent
+    /// returns to the shell prompt.
     @Published private(set) var isActive = false
 
     static let maxEntries = 200
@@ -38,12 +38,10 @@ final class AgentOutlineModel: ObservableObject {
         isActive = true
     }
 
-    /// The surface went back to a shell prompt — the agent session (and
-    /// with it the outline) is over. Entries are dropped so the next
-    /// session starts clean; the panel slides away.
+    /// The surface went back to a shell prompt, ending the active session.
+    /// Keep the bounded entry list as this tab's message history.
     func endSession() {
         isActive = false
-        entries.removeAll()
     }
 }
 

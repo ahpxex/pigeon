@@ -53,6 +53,10 @@ enum ActivityHooks {
     }
 
     static let reporterName = "pigeon-activity"
+    private static let integrationVersion = 2
+    private static var versionMarker: String {
+        "pigeon-activity-v\(integrationVersion)"
+    }
 
     /// The reporter is stateless glue driven by per-tab env vars, so it
     /// lives in the production config directory regardless of which app
@@ -81,25 +85,54 @@ enum ActivityHooks {
 
     private static let script = """
         #!/bin/sh
+        # pigeon-activity-v2
         # pigeon-activity — installed by Pigeon (Settings → Agent).
         # Reports coding-agent run state to the Pigeon tab that launched
-        # the agent, so the sidebar spinner reflects real activity.
-        # Called by hook configs as:  pigeon-activity <event> <source>
-        # with event = busy | idle | ping. Reads PIGEON_AGENT_PORT /
-        # PIGEON_AGENT_TOKEN / PIGEON_SURFACE_ID from the environment
-        # (inherited from the terminal tab) and silently no-ops outside
-        # Pigeon. The curl is backgrounded so the hook returns at once.
+        # the agent. Called as:
+        #   pigeon-activity <event> <source> [hook-input.json]
+        # UserPromptSubmit input is copied into the request so its prompt
+        # can drive message history. Outside Pigeon this silently no-ops.
         [ -n "$PIGEON_AGENT_PORT" ] && [ -n "$PIGEON_AGENT_TOKEN" ] && [ -n "$PIGEON_SURFACE_ID" ] || exit 0
-        curl -s -o /dev/null -m 2 \\
-          -X POST "http://127.0.0.1:$PIGEON_AGENT_PORT/activity" \\
-          -H "Authorization: Bearer $PIGEON_AGENT_TOKEN" \\
-          -H "X-Pigeon-Surface: $PIGEON_SURFACE_ID" \\
-          -H "Content-Type: application/json" \\
-          --data "{\\"event\\":\\"$1\\",\\"source\\":\\"$2\\"}" &
+
+        body=$(/usr/bin/mktemp -t pigeon-activity) || exit 0
+        if [ -n "${3:-}" ] && [ -f "$3" ]; then
+          /bin/cp "$3" "$body" || { /bin/rm -f "$body"; exit 0; }
+        else
+          /bin/rm -f "$body"
+          /usr/bin/plutil -create xml1 "$body" >/dev/null 2>&1 || exit 0
+        fi
+
+        if /usr/bin/plutil -type event "$body" >/dev/null 2>&1; then
+          /usr/bin/plutil -replace event -string "$1" "$body" >/dev/null 2>&1
+        else
+          /usr/bin/plutil -insert event -string "$1" "$body" >/dev/null 2>&1
+        fi
+        if /usr/bin/plutil -type source "$body" >/dev/null 2>&1; then
+          /usr/bin/plutil -replace source -string "$2" "$body" >/dev/null 2>&1
+        else
+          /usr/bin/plutil -insert source -string "$2" "$body" >/dev/null 2>&1
+        fi
+        /usr/bin/plutil -convert json "$body" >/dev/null 2>&1 || {
+          /bin/rm -f "$body"
+          exit 0
+        }
+
+        (
+          /usr/bin/curl --noproxy '*' -s -o /dev/null -m 2 \\
+            -X POST "http://127.0.0.1:$PIGEON_AGENT_PORT/activity" \\
+            -H "Authorization: Bearer $PIGEON_AGENT_TOKEN" \\
+            -H "X-Pigeon-Surface: $PIGEON_SURFACE_ID" \\
+            -H "Content-Type: application/json" \\
+            --data-binary @"$body"
+          /bin/rm -f "$body"
+        ) >/dev/null 2>&1 &
         """
 
     static var isReporterInstalled: Bool {
-        FileManager.default.isExecutableFile(atPath: reporterURL.path)
+        guard FileManager.default.isExecutableFile(atPath: reporterURL.path),
+              let installed = try? String(contentsOf: reporterURL, encoding: .utf8)
+        else { return false }
+        return installed.contains(versionMarker)
     }
 
     @discardableResult
@@ -122,15 +155,48 @@ enum ActivityHooks {
     // MARK: - Per-source status
 
     static func isInstalled(_ source: Source) -> Bool {
+        guard isReporterInstalled else { return false }
+        switch source {
+        case .pi:
+            guard let installed = try? String(contentsOf: piExtensionURL, encoding: .utf8)
+            else { return false }
+            return installed.contains(versionMarker)
+        case .claudeCode:
+            return jsonHookEventsContainReporter(
+                at: claudeSettingsURL,
+                events: ["SessionStart", "UserPromptSubmit", "Stop", "StopFailure", "SessionEnd"],
+                requireCurrentVersion: true)
+        case .codex:
+            return jsonHookEventsContainReporter(
+                at: codexHooksURL,
+                events: ["SessionStart", "UserPromptSubmit", "Stop", "SessionEnd"],
+                requireCurrentVersion: true)
+        }
+    }
+
+    /// Bring integrations installed by an older Pigeon up to the current
+    /// protocol. Presence is checked independently of version so an app
+    /// update repairs stale scripts and commands without requiring a
+    /// remove/reinstall cycle in Settings.
+    static func upgradeInstalledHooks() {
+        for source in Source.allCases where isConfigured(source) && !isInstalled(source) {
+            do {
+                try install(source)
+            } catch {
+                Ghostty.logger.error(
+                    "activity hooks: failed to upgrade \(source.rawValue): \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private static func isConfigured(_ source: Source) -> Bool {
         switch source {
         case .pi:
             return FileManager.default.fileExists(atPath: piExtensionURL.path)
         case .claudeCode:
-            return jsonHookEventsContainReporter(
-                at: claudeSettingsURL, events: ["UserPromptSubmit", "Stop"])
+            return jsonHooksMentionReporter(at: claudeSettingsURL)
         case .codex:
-            return jsonHookEventsContainReporter(
-                at: codexHooksURL, events: ["UserPromptSubmit", "Stop"])
+            return jsonHooksMentionReporter(at: codexHooksURL)
         }
     }
 
@@ -156,7 +222,7 @@ enum ActivityHooks {
                 "UserPromptSubmit": "busy",
                 "Stop": "idle",
                 "SessionEnd": "idle",
-            ], promptEvents: ["UserPromptSubmit"], teeStdin: true)
+            ], promptEvents: ["UserPromptSubmit"])
         }
     }
 
@@ -187,7 +253,7 @@ enum ActivityHooks {
     /// else in the file is preserved untouched.
     private static func mergeJSONHooks(
         at url: URL, source: Source, events: [String: String],
-        promptEvents: Set<String> = [], teeStdin: Bool = false
+        promptEvents: Set<String> = []
     ) throws {
         var root = (try? Data(contentsOf: url))
             .flatMap { try? JSONSerialization.jsonObject(with: $0) }
@@ -199,16 +265,12 @@ enum ActivityHooks {
             groups.removeAll { mentionsReporter($0) }
             var command = "$HOME/.config/pigeon/hooks/\(reporterName) \(action) \(source.rawValue)"
             if promptEvents.contains(event) {
-                if teeStdin {
-                    // Codex delivers the hook JSON on stdin; tee to a temp
-                    // file and hand its path as $3.
-                    command = "f=$(mktemp); cat > \"$f\"; \(command) \"$f\"; rm -f \"$f\""
-                } else {
-                    // Claude Code exec form hands the input JSON path as $3,
-                    // whose "prompt" field is the user's message.
-                    command += " \"$3\""
-                }
+                // Both hosts deliver event JSON on stdin. Preserve it in a
+                // temporary file so prompt text is never interpolated into
+                // shell or JSON syntax.
+                command = "f=$(mktemp); cat > \"$f\"; \(command) \"$f\"; rm -f \"$f\""
             }
+            command += " # \(versionMarker)"
             groups.append([
                 "hooks": [[
                     "type": "command",
@@ -245,13 +307,31 @@ enum ActivityHooks {
         try data.write(to: url, options: .atomic)
     }
 
-    private static func jsonHookEventsContainReporter(at url: URL, events: [String]) -> Bool {
+    private static func jsonHookEventsContainReporter(
+        at url: URL, events: [String], requireCurrentVersion: Bool
+    ) -> Bool {
         guard let root = (try? Data(contentsOf: url))
             .flatMap({ try? JSONSerialization.jsonObject(with: $0) }) as? [String: Any],
               let hooks = root["hooks"] as? [String: Any]
         else { return false }
-        return events.contains { event in
-            (hooks[event] as? [[String: Any]])?.contains(where: mentionsReporter) == true
+        return events.allSatisfy { event in
+            (hooks[event] as? [[String: Any]])?.contains { group in
+                guard mentionsReporter(group) else { return false }
+                guard requireCurrentVersion else { return true }
+                return (group["hooks"] as? [[String: Any]])?.contains {
+                    ($0["command"] as? String)?.contains(versionMarker) == true
+                } == true
+            } == true
+        }
+    }
+
+    private static func jsonHooksMentionReporter(at url: URL) -> Bool {
+        guard let root = (try? Data(contentsOf: url))
+            .flatMap({ try? JSONSerialization.jsonObject(with: $0) }) as? [String: Any],
+              let hooks = root["hooks"] as? [String: Any]
+        else { return false }
+        return hooks.values.contains { value in
+            (value as? [[String: Any]])?.contains(where: mentionsReporter) == true
         }
     }
 
@@ -313,6 +393,7 @@ enum ActivityHooks {
     private static let piExtension = #"""
         import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
+        // pigeon-activity-v2
         // pigeon-activity — installed by Pigeon (Settings → Agent).
         // Reports pi's run state to the Pigeon tab that launched it, so
         // the sidebar spinner reflects real activity, and forwards the
