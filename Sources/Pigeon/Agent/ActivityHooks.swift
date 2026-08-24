@@ -1,10 +1,9 @@
 import Foundation
 
 /// Integrations that let coding agents (pi, Claude Code, Codex) report
-/// their real run state to Pigeon. Wherever these are installed, the
-/// sidebar spinner follows authoritative agent events instead of the
-/// viewport-sampling heuristic (which false-ignites on scrolling,
-/// window resizes, and other screen churn).
+/// their real run state to Pigeon. The sidebar spinner follows these
+/// events exclusively; terminal input and output are never interpreted
+/// as agent state.
 ///
 /// Two moving parts:
 ///
@@ -21,8 +20,7 @@ import Foundation
 ///   the reporter name, which is also how removal finds them.
 ///
 /// Events: `busy` lights the spinner, `idle` clears it (and flags
-/// unread), `ping` only marks the surface as hook-driven (SessionStart /
-/// session_start), which suppresses heuristic ignition from then on.
+/// unread), and `ping` establishes an idle baseline at session start.
 enum ActivityHooks {
     enum Source: String, CaseIterable {
         case pi
@@ -53,10 +51,11 @@ enum ActivityHooks {
     }
 
     static let reporterName = "pigeon-activity"
-    private static let integrationVersion = 2
-    private static var versionMarker: String {
-        "pigeon-activity-v\(integrationVersion)"
-    }
+    private static let reporterVersionMarker = "pigeon-activity-v3"
+    /// Keep JSON hook commands byte-for-byte stable while upgrading the
+    /// shared reporter. Codex trusts the command itself, so needlessly
+    /// changing this marker would invalidate an already-approved hook.
+    private static let jsonHookVersionMarker = "pigeon-activity-v2"
 
     /// The reporter is stateless glue driven by per-tab env vars, so it
     /// lives in the production config directory regardless of which app
@@ -85,7 +84,7 @@ enum ActivityHooks {
 
     private static let script = """
         #!/bin/sh
-        # pigeon-activity-v2
+        # pigeon-activity-v3
         # pigeon-activity — installed by Pigeon (Settings → Agent).
         # Reports coding-agent run state to the Pigeon tab that launched
         # the agent. Called as:
@@ -117,22 +116,26 @@ enum ActivityHooks {
           exit 0
         }
 
-        (
-          /usr/bin/curl --noproxy '*' -s -o /dev/null -m 2 \\
-            -X POST "http://127.0.0.1:$PIGEON_AGENT_PORT/activity" \\
-            -H "Authorization: Bearer $PIGEON_AGENT_TOKEN" \\
-            -H "X-Pigeon-Surface: $PIGEON_SURFACE_ID" \\
-            -H "Content-Type: application/json" \\
-            --data-binary @"$body"
-          /bin/rm -f "$body"
-        ) >/dev/null 2>&1 &
+        # Wait for Pigeon to accept the event before the hook exits. The
+        # previous fire-and-forget subprocess could be torn down by the
+        # host before curl connected, silently losing busy or idle.
+        /usr/bin/curl --noproxy '*' --silent --fail --output /dev/null \\
+          --connect-timeout 0.25 --max-time 2 \\
+          -X POST "http://127.0.0.1:$PIGEON_AGENT_PORT/activity" \\
+          -H "Authorization: Bearer $PIGEON_AGENT_TOKEN" \\
+          -H "X-Pigeon-Surface: $PIGEON_SURFACE_ID" \\
+          -H "Content-Type: application/json" \\
+          --data-binary @"$body" >/dev/null 2>&1
+        /bin/rm -f "$body"
+        # Activity reporting must never break the coding agent itself.
+        exit 0
         """
 
     static var isReporterInstalled: Bool {
         guard FileManager.default.isExecutableFile(atPath: reporterURL.path),
               let installed = try? String(contentsOf: reporterURL, encoding: .utf8)
         else { return false }
-        return installed.contains(versionMarker)
+        return installed.contains(reporterVersionMarker)
     }
 
     @discardableResult
@@ -160,7 +163,7 @@ enum ActivityHooks {
         case .pi:
             guard let installed = try? String(contentsOf: piExtensionURL, encoding: .utf8)
             else { return false }
-            return installed.contains(versionMarker)
+            return installed.contains(reporterVersionMarker)
         case .claudeCode:
             return jsonHookEventsContainReporter(
                 at: claudeSettingsURL,
@@ -169,7 +172,9 @@ enum ActivityHooks {
         case .codex:
             return jsonHookEventsContainReporter(
                 at: codexHooksURL,
-                events: ["SessionStart", "UserPromptSubmit", "Stop", "SessionEnd"],
+                events: [
+                    "SessionStart", "UserPromptSubmit", "Stop", "StopFailure", "SessionEnd",
+                ],
                 requireCurrentVersion: true)
         }
     }
@@ -221,6 +226,7 @@ enum ActivityHooks {
                 "SessionStart": "ping",
                 "UserPromptSubmit": "busy",
                 "Stop": "idle",
+                "StopFailure": "idle",
                 "SessionEnd": "idle",
             ], promptEvents: ["UserPromptSubmit"])
         }
@@ -236,7 +242,7 @@ enum ActivityHooks {
             ])
         case .codex:
             try removeJSONHooks(at: codexHooksURL, events: [
-                "SessionStart", "UserPromptSubmit", "Stop", "SessionEnd",
+                "SessionStart", "UserPromptSubmit", "Stop", "StopFailure", "SessionEnd",
             ])
         }
         // The reporter only matters while some agent still points at it.
@@ -270,7 +276,7 @@ enum ActivityHooks {
                 // shell or JSON syntax.
                 command = "f=$(mktemp); cat > \"$f\"; \(command) \"$f\"; rm -f \"$f\""
             }
-            command += " # \(versionMarker)"
+            command += " # \(jsonHookVersionMarker)"
             groups.append([
                 "hooks": [[
                     "type": "command",
@@ -319,7 +325,7 @@ enum ActivityHooks {
                 guard mentionsReporter(group) else { return false }
                 guard requireCurrentVersion else { return true }
                 return (group["hooks"] as? [[String: Any]])?.contains {
-                    ($0["command"] as? String)?.contains(versionMarker) == true
+                    ($0["command"] as? String)?.contains(jsonHookVersionMarker) == true
                 } == true
             } == true
         }
@@ -393,7 +399,7 @@ enum ActivityHooks {
     private static let piExtension = #"""
         import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-        // pigeon-activity-v2
+        // pigeon-activity-v3
         // pigeon-activity — installed by Pigeon (Settings → Agent).
         // Reports pi's run state to the Pigeon tab that launched it, so
         // the sidebar spinner reflects real activity, and forwards the
@@ -405,25 +411,32 @@ enum ActivityHooks {
           const surface = process.env.PIGEON_SURFACE_ID;
           if (!port || !token || !surface) return;
 
-          const report = (event: string, prompt?: string) => {
-            fetch(`http://127.0.0.1:${port}/activity`, {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${token}`,
-                "X-Pigeon-Surface": surface,
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({ event, source: "pi", prompt }),
-            }).catch(() => {});
+          const report = async (event: string, prompt?: string) => {
+            try {
+              const response = await fetch(`http://127.0.0.1:${port}/activity`, {
+                method: "POST",
+                headers: {
+                  Authorization: `Bearer ${token}`,
+                  "X-Pigeon-Surface": surface,
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ event, source: "pi", prompt }),
+                signal: AbortSignal.timeout(2000),
+              });
+              if (!response.ok) throw new Error(`Pigeon returned ${response.status}`);
+            } catch {
+              // Pigeon may have exited; reporting must not break pi.
+            }
           };
 
-          // ping marks the surface as hook-driven: Pigeon stops guessing
-          // from screen churn for this tab.
+          // Returning the promise makes pi await delivery before it moves
+          // to the next lifecycle event.
           pi.on("session_start", () => report("ping"));
           // agent_settled (not agent_end): pi may auto-retry or compact
           // and continue — settled is the "really done" signal.
           pi.on("before_agent_start", (event) => report("busy", event.prompt));
           pi.on("agent_settled", () => report("idle"));
+          pi.on("session_shutdown", () => report("idle"));
         }
         """#
 

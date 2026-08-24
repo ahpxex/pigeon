@@ -13,7 +13,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppSettings.shared.applyAppearance()
         AgentServer.shared.start()
         ActivityHooks.upgradeInstalledHooks()
-        TabActivityMonitor.shared.start()
         TabTitleSummarizer.shared.start()
         DriverServer.shared.startIfConfigured()
 
@@ -37,6 +36,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        TabManager.forKeyWindow?.clearUnreadForSelectedTab()
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

@@ -209,6 +209,13 @@ final class WindowDelegateProxy: NSObject, NSWindowDelegate {
         return super.forwardingTarget(for: aSelector)
     }
 
+    func windowDidBecomeKey(_ notification: Notification) {
+        if let forward, forward.responds(to: #selector(NSWindowDelegate.windowDidBecomeKey(_:))) {
+            forward.windowDidBecomeKey?(notification)
+        }
+        tabManager?.clearUnreadForSelectedTab()
+    }
+
     func windowDidMove(_ notification: Notification) {
         if let forward, forward.responds(to: #selector(NSWindowDelegate.windowDidMove(_:))) {
             forward.windowDidMove?(notification)

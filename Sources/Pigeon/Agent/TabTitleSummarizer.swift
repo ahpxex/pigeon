@@ -6,14 +6,10 @@ import Foundation
 /// them apart.
 ///
 /// Deliberately NOT a polling loop against the API — two triggers only:
-/// - **Once, automatically** (if enabled in General settings): when a
-///   real work session has happened — the user interacted with the
-///   terminal and the tool then produced sustained output on its own
-///   (TabActivityMonitor's work log). A raw size threshold doesn't
-///   work here: TUIs like Claude Code and Codex paint a full screen
-///   the moment they launch, before the user has asked for anything.
-///   The summary fires when the work settles, or mid-flight once the
-///   tool has been at it long enough to show what it's doing.
+/// - **Once, automatically** (if enabled in General settings): after a
+///   coding-agent busy hook has run long enough, either when its idle
+///   hook arrives or mid-flight for a long task. Terminal output never
+///   participates in deciding whether an agent is running.
 /// - **On demand**: the tab's context-menu "Summarize Title" (also the
 ///   driver's /tabs/summarize), any number of times.
 ///
@@ -25,12 +21,10 @@ final class TabTitleSummarizer {
     /// How often tabs are checked (locally, no network) for the
     /// auto-summarize condition.
     private static let tickInterval: TimeInterval = 5
-    /// A work session counts once the tool has produced this many
-    /// seconds of spontaneous output after user input — filters out
-    /// prompt echo and instant commands like `ls`.
+    /// A work session counts once hooks have reported this much busy
+    /// time, filtering out accidental or immediately-cancelled prompts.
     private static let minWorkSeconds: TimeInterval = 3
-    /// …and the summary fires when the screen has then been quiet this
-    /// long (the task finished or paused, content shows the outcome)…
+    /// ...and the summary fires this long after an explicit idle hook...
     private static let settleSeconds: TimeInterval = 4
     /// …or immediately once this much sustained work has accumulated —
     /// a long-running agent shouldn't keep its tab unnamed for minutes.
@@ -73,8 +67,7 @@ final class TabTitleSummarizer {
         request(tab, content: content, state: state)
     }
 
-    /// What the user asked for, per the activity monitor's submit
-    /// snapshots — the strongest signal for an accurate title.
+    /// What the user asked for, supplied directly by busy hooks.
     private static func submitContext(of tab: TerminalTab) -> String? {
         guard let submits = TabActivityMonitor.shared.activity(for: tab.id)?.recentSubmits,
               !submits.isEmpty
@@ -95,7 +88,8 @@ final class TabTitleSummarizer {
                   let activity = TabActivityMonitor.shared.activity(for: tab.id),
                   activity.workSeconds >= Self.minWorkSeconds,
                   activity.workSeconds >= Self.longWorkSeconds
-                    || Date().timeIntervalSince(activity.lastChangeAt) >= Self.settleSeconds
+                    || (!activity.isBusy
+                        && Date().timeIntervalSince(activity.lastEventAt) >= Self.settleSeconds)
             else { continue }
             let content = Self.screenTail(of: tab)
             guard !content.isEmpty else { continue }
@@ -157,7 +151,7 @@ final class TabTitleSummarizer {
         the user is getting done in this terminal.
         Rules:
         - The user's own requests (the "user submitted" sections, \
-        captured as they pressed Enter) are the primary signal: name \
+        reported directly by coding-agent hooks) are the primary signal: name \
         the task the user asked for. The terminal output only refines it.
         - At most 4 words (English) or 12 characters (CJK). No quotes, \
         no trailing punctuation, no emoji.
@@ -178,9 +172,8 @@ final class TabTitleSummarizer {
         }
         if let submits {
             user += """
-            What the user submitted (screen at the moment of each \
-            Enter, oldest first; the typed request is on the last \
-            lines of each):
+            What the user submitted (reported by coding-agent hooks, \
+            oldest first):
             \(submits)
 
             """

@@ -31,9 +31,8 @@ final class TerminalTab: Identifiable, ObservableObject {
     /// owning TabManager).
     var pwdObserver: AnyCancellable?
 
-    /// The terminal is producing output on its own (a build, a coding
-    /// agent working, …) — the sidebar swaps the icon for a spinner.
-    /// Maintained by TabActivityMonitor.
+    /// A coding-agent hook reported that the agent is working. The
+    /// sidebar swaps the icon for a spinner until an idle hook arrives.
     @Published var isBusy = false
 
     /// Work finished while the user was looking elsewhere — a dot at
@@ -259,6 +258,8 @@ final class TabManager: ObservableObject {
     private func forceClose(_ tab: TerminalTab) {
         guard let index = tabs.firstIndex(where: { $0.id == tab.id }) else { return }
         let window = tab.surfaceView.window
+        TabActivityMonitor.shared.remove(
+            tabID: tab.id, surfaceID: tab.surfaceView.agentSurfaceID)
         tabs.remove(at: index)
         tab.pwdObserver = nil
         pruneEmptyAutoGroups()
@@ -272,6 +273,7 @@ final class TabManager: ObservableObject {
         }
         if selectedTabID == tab.id {
             selectedTabID = tabs[min(index, tabs.count - 1)].id
+            selectedTab?.hasUnread = false
         }
     }
 
@@ -285,7 +287,11 @@ final class TabManager: ObservableObject {
     /// SwiftUI may keep the scene state alive afterwards, so also retire
     /// this manager from the registry.
     func terminateAllTabs() {
-        for tab in tabs { tab.surfaceView.shutdownSurface() }
+        for tab in tabs {
+            TabActivityMonitor.shared.remove(
+                tabID: tab.id, surfaceID: tab.surfaceView.agentSurfaceID)
+            tab.surfaceView.shutdownSurface()
+        }
         tabs.removeAll()
         selectedTabID = nil
         Self.registry.removeAll { $0.value === self || $0.value == nil }
@@ -339,6 +345,11 @@ final class TabManager: ObservableObject {
             toggleExpanded(group)
         }
         selectedTabID = tab.id
+        tab.hasUnread = false
+    }
+
+    func clearUnreadForSelectedTab() {
+        selectedTab?.hasUnread = false
     }
 
     /// Move a tab so it takes the position currently held by `target`.

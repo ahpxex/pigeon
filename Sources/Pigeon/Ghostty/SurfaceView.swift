@@ -141,18 +141,12 @@ extension Ghostty {
             return ghostty_surface_needs_confirm_quit(surface)
         }
 
-        /// When the user last typed into this terminal (driver input
-        /// counts too, so tests exercise the same paths). Activity
-        /// tracking uses it to tell tool output from typing echo.
-        private(set) var lastUserInputAt: Date?
-
         // MARK: Programmatic access (driver / tests)
 
         /// Send raw text to the pty as if typed. Control characters pass
         /// through (e.g. "\u{03}" for ctrl-c, "\r" for enter).
         func sendText(_ text: String) {
             guard let surface else { return }
-            lastUserInputAt = Date()
             text.withCString { cString in
                 ghostty_surface_text(surface, cString, UInt(strlen(cString)))
             }
@@ -168,10 +162,6 @@ extension Ghostty {
             mods: ghostty_input_mods_e = GHOSTTY_MODS_NONE
         ) {
             guard let surface else { return }
-            lastUserInputAt = Date()
-            if keyCode == 36, mods == GHOSTTY_MODS_NONE {
-                NotificationCenter.default.post(name: .pigeonSurfaceDidSubmit, object: self)
-            }
             var key = ghostty_input_key_s()
             key.keycode = keyCode
             key.mods = mods
@@ -445,15 +435,6 @@ extension Ghostty {
                 super.keyDown(with: event)
                 return
             }
-            lastUserInputAt = Date()
-            // Bare Enter (Return or keypad Enter, no modifiers) reads as
-            // "submitted" — shift+Enter is a newline in TUIs like Claude
-            // Code and must not light the spinner while composing.
-            if event.keyCode == 36 || event.keyCode == 76,
-               event.modifierFlags.intersection([.shift, .control, .option, .command]).isEmpty {
-                NotificationCenter.default.post(name: .pigeonSurfaceDidSubmit, object: self)
-            }
-
             // Run the event through the input method stack first. Plain
             // keys produce text via insertText, IME sequences produce
             // marked text and eventually commit through insertText too.
@@ -559,7 +540,6 @@ extension Ghostty {
 
             let key = event.ghosttyKeyEvent(GHOSTTY_ACTION_PRESS)
             guard ghostty_surface_key_is_binding(surface, key) else { return false }
-            lastUserInputAt = Date()
             _ = ghostty_surface_key(surface, key)
             return true
         }

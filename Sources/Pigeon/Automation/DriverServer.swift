@@ -320,7 +320,11 @@ final class DriverServer {
                   let event = json["event"] as? String,
                   ["busy", "idle", "ping"].contains(event)
             else { return HTTPResponse(status: 400, error: "need {surface, event}") }
-            TabActivityMonitor.shared.handleHookActivity(surfaceID: surface, event: event)
+            guard TabActivityMonitor.shared.handleHookActivity(
+                surfaceID: surface, event: event,
+                prompt: json["prompt"] as? String,
+                source: json["source"] as? String
+            ) else { return HTTPResponse(status: 404, error: "surface not found") }
             return HTTPResponse(json: ["ok": true])
 
         case ("POST", "/tabs/move"):

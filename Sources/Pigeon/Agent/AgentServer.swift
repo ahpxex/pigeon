@@ -188,12 +188,15 @@ final class AgentServer {
             let prompt = (json["prompt"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
             let source = json["source"] as? String
             Task { @MainActor in
-                TabActivityMonitor.shared.handleHookActivity(
+                let accepted = TabActivityMonitor.shared.handleHookActivity(
                     surfaceID: surfaceID, event: event,
                     prompt: (event == "busy" && !(prompt ?? "").isEmpty) ? prompt : nil,
                     source: source)
+                let status = accepted ? "200 OK" : "404 Not Found"
+                self.send(
+                    connection,
+                    raw: "HTTP/1.1 \(status)\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
             }
-            send(connection, raw: "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
             return
         }
         guard request.method == "POST", request.path == "/ask" else {
