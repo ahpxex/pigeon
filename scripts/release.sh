@@ -87,6 +87,7 @@ fi
 # path is separate from build/ so the running dev instance is untouched.
 log "building Pigeon $VERSION ($BUILD) — Release, $IDENTITY_NAME"
 rm -rf "$DERIVED" "$DERIVED.log"
+mkdir -p "$(dirname "$DERIVED")"
 # CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO: the `build` action otherwise
 # injects com.apple.security.get-task-allow (debuggable), which the
 # notary service rejects.
