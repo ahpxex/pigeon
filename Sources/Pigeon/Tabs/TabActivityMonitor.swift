@@ -15,9 +15,16 @@ final class TabActivityMonitor {
         /// summarizer uses these instead of sampling the terminal screen
         /// at Enter time.
         var recentSubmits: [String] = []
+        /// Monotonic count of user submissions to the coding agent: a
+        /// busy hook that starts a new work interval, or one carrying a
+        /// prompt while work is already running (a queued follow-up).
+        /// The title summarizer re-titles the tab once per submission.
+        var submitCount = 0
 
         fileprivate var accumulatedWorkSeconds: TimeInterval = 0
         fileprivate var busyStartedAt: Date?
+        /// `workSeconds` at the moment of the latest submission.
+        fileprivate var workSecondsAtSubmit: TimeInterval = 0
 
         /// Hook-reported work time. A live busy interval continues to
         /// accrue without polling or inspecting terminal output.
@@ -28,6 +35,13 @@ final class TabActivityMonitor {
         }
 
         var isBusy: Bool { busyStartedAt != nil }
+
+        /// Hook-reported work time since the latest submission — what
+        /// decides whether that submission was substantial enough to
+        /// re-title the tab for.
+        var workSecondsSinceSubmit: TimeInterval {
+            max(0, workSeconds - workSecondsAtSubmit)
+        }
     }
 
     private static let maxSubmitSnapshots = 3
@@ -64,7 +78,12 @@ final class TabActivityMonitor {
 
         switch event {
         case "busy":
-            if activity.busyStartedAt == nil {
+            let startsInterval = activity.busyStartedAt == nil
+            if startsInterval || prompt != nil {
+                activity.workSecondsAtSubmit = activity.workSeconds
+                activity.submitCount += 1
+            }
+            if startsInterval {
                 activity.busyStartedAt = now
             }
             activity.lastEventAt = now

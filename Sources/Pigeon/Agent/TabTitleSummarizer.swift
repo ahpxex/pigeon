@@ -6,10 +6,14 @@ import Foundation
 /// them apart.
 ///
 /// Deliberately NOT a polling loop against the API — two triggers only:
-/// - **Once, automatically** (if enabled in General settings): after a
-///   coding-agent busy hook has run long enough, either when its idle
-///   hook arrives or mid-flight for a long task. Terminal output never
-///   participates in deciding whether an agent is running.
+/// - **Once per submission, automatically** (if enabled in General
+///   settings): every prompt the user sends to a coding agent (a busy
+///   hook, see `TabActivityMonitor.Activity.submitCount`) earns one
+///   re-title, requested after that submission has run long enough —
+///   either when its idle hook arrives or mid-flight for a long task —
+///   so the tab follows what the user is currently asking for.
+///   Terminal output never participates in deciding whether an agent
+///   is running, and nothing fires between submissions.
 /// - **On demand**: the tab's context-menu "Summarize Title" (also the
 ///   driver's /tabs/summarize), any number of times.
 ///
@@ -21,21 +25,23 @@ final class TabTitleSummarizer {
     /// How often tabs are checked (locally, no network) for the
     /// auto-summarize condition.
     private static let tickInterval: TimeInterval = 5
-    /// A work session counts once hooks have reported this much busy
-    /// time, filtering out accidental or immediately-cancelled prompts.
+    /// A submission counts once hooks have reported this much busy time
+    /// for it, filtering out accidental or immediately-cancelled prompts.
     private static let minWorkSeconds: TimeInterval = 3
     /// ...and the summary fires this long after an explicit idle hook...
     private static let settleSeconds: TimeInterval = 4
-    /// …or immediately once this much sustained work has accumulated —
-    /// a long-running agent shouldn't keep its tab unnamed for minutes.
+    /// …or immediately once this much sustained work has accumulated on
+    /// the submission — a long-running task shouldn't keep a stale title
+    /// for minutes.
     private static let longWorkSeconds: TimeInterval = 15
     /// Debounce for the manual action (double-clicked menu items).
     private static let manualDebounce: TimeInterval = 3
 
     private struct TabState {
-        /// The one automatic summary was requested (set at request time
-        /// so failures don't turn auto mode into a retry loop).
-        var autoDone = false
+        /// `submitCount` of the latest submission a summary has been
+        /// requested for (set at request time so failures don't turn
+        /// auto mode into a retry loop). A newer submission re-arms it.
+        var summarizedSubmitCount = 0
         var lastRequestAt: Date = .distantPast
         var inFlight = false
     }
@@ -62,8 +68,9 @@ final class TabTitleSummarizer {
         else { return }
         let content = Self.screenTail(of: tab)
         guard !content.isEmpty else { return }
-        // A manual summary also satisfies the automatic one.
-        state.autoDone = true
+        // A manual summary also covers the pending submission, if any.
+        state.summarizedSubmitCount =
+            TabActivityMonitor.shared.activity(for: tab.id)?.submitCount ?? 0
         request(tab, content: content, state: state)
     }
 
@@ -82,18 +89,19 @@ final class TabTitleSummarizer {
 
         for tab in tabs {
             var state = states[tab.id] ?? TabState()
-            guard !state.autoDone, !state.inFlight,
+            guard !state.inFlight,
                   // A rename means the user already named it better.
                   tab.customTitle == nil,
                   let activity = TabActivityMonitor.shared.activity(for: tab.id),
-                  activity.workSeconds >= Self.minWorkSeconds,
-                  activity.workSeconds >= Self.longWorkSeconds
+                  activity.submitCount > state.summarizedSubmitCount,
+                  activity.workSecondsSinceSubmit >= Self.minWorkSeconds,
+                  activity.workSecondsSinceSubmit >= Self.longWorkSeconds
                     || (!activity.isBusy
                         && Date().timeIntervalSince(activity.lastEventAt) >= Self.settleSeconds)
             else { continue }
             let content = Self.screenTail(of: tab)
             guard !content.isEmpty else { continue }
-            state.autoDone = true
+            state.summarizedSubmitCount = activity.submitCount
             request(tab, content: content, state: state)
         }
     }
@@ -171,12 +179,14 @@ final class TabTitleSummarizer {
             user += "Previous title: \(previousTitle)\n\n"
         }
         if let submits {
+            // Multi-line literals drop the final newline: add the blank
+            // separator line explicitly.
             user += """
             What the user submitted (reported by coding-agent hooks, \
             oldest first):
             \(submits)
 
-            """
+            """ + "\n"
         }
         user += "Terminal content now:\n\(content)"
 
