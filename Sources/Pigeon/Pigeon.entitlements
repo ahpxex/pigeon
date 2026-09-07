@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	Hardened Runtime entitlements (required for notarization).
+
+	A terminal is the "responsible process" for everything it spawns:
+	when a program running inside Pigeon touches a TCC-protected resource
+	(osascript → Apple Events, ffmpeg → camera/mic, a script reading
+	Contacts/Calendar/Photos), macOS attributes the request to Pigeon.
+	Under the hardened runtime that access is denied outright unless the
+	terminal itself declares the matching entitlement, so we declare the
+	same set Ghostty ships (vendor/ghostty/macos/Ghostty.entitlements).
+	The usage-description strings live in project.yml (Info.plist).
+
+	No sandbox (a shell must run with full user privileges) and no
+	disable-library-validation: everything we load is either statically
+	linked (libghostty, libgit2, cmark) or re-signed with our identity at
+	embed time (Sparkle.framework).
+	-->
+	<key>com.apple.security.automation.apple-events</key>
+	<true/>
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+	<key>com.apple.security.device.camera</key>
+	<true/>
+	<key>com.apple.security.personal-information.addressbook</key>
+	<true/>
+	<key>com.apple.security.personal-information.calendars</key>
+	<true/>
+	<key>com.apple.security.personal-information.location</key>
+	<true/>
+	<key>com.apple.security.personal-information.photos-library</key>
+	<true/>
+</dict>
+</plist>

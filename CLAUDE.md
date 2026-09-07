@@ -93,13 +93,32 @@ Debug 构建是独立的 app "**Pigeon Dev**"，与安装在 /Applications 的�
 - **pigeonctl 只认 dev 实例**：pgrep/pkill 按可执行文件完整路径匹配（`build/Build/Products/Debug/...`），`quit` 永远不会杀到生产版。驱动端口用 `open --env` 随进程注入（老的 `launchctl setenv` 是用户级全局变量，会泄漏给同窗口期启动的生产实例，别改回去）。
 - **AgentServer 端口是系统分配的临时端口**（port 0 + 等 listener .ready 后读回），不是固定 8791 —— 固定端口在双实例下必撞，且 NWListener 的坑：创建不报错、start 之后 state 回调才报 bind 失败，天真的扫描会"绑上"别的实例占的端口，流量静默串门（已踩过：dev 的 /ask 全 403，因为打到了生产实例）。端口本来就逐 surface 注入 env，没有任何东西需要它可预测。
 
+### 签名与公证（Release 发布）
+
+Release 构建用 **Developer ID Application**（团队 `L7GVXT64TV`）签名 + hardened runtime + Apple 公证 + staple，这样下载后不被 Gatekeeper 拦。Debug 仍用本地自签 "Pigeon Dev"，但同样开 hardened runtime（提前暴露 TCC/库校验问题）。
+
+```sh
+scripts/notary-setup.sh --key AuthKey_XXX.p8 --key-id XXX --issuer <uuid>   # 每台机器一次，存 notarytool 钥匙串 profile "pigeon-notary"
+scripts/release.sh [--version X.Y.Z --build N] [--universal]   # 构建→签名→公证(等结果)→staple→dist/Pigeon-<ver>.zip
+scripts/release.sh --no-notarize                                # 只签名，本地冒烟（Gatekeeper 会报 Unnotarized，属预期）
+```
+
+CI（`.github/workflows/release.yml`，push `v*` tag 触发；`workflow_dispatch` 是不发布的干跑，产物进 run artifacts）跑的是同一个 `release.sh`，凭据来自 secrets（2026-09-07 已全部设好）：`MACOS_CERTIFICATE_P12`/`MACOS_CERTIFICATE_PASSWORD`（Developer ID 身份导出的 .p12，base64；`scripts/export-signing-identity.swift` 从钥匙串单独导出这一个身份——`security export` 做不到只导一个）、`APPLE_NOTARY_KEY_P8`/`APPLE_NOTARY_KEY_ID`/`APPLE_NOTARY_ISSUER`（App Store Connect API key "Pigeon Notarization"）、`SPARKLE_ED_PRIVATE_KEY`。任一缺失即失败——不再退回 ad-hoc 签名发布。所有这些凭据的原件都在 1Password Private vault（"Pigeon Notarization (App Store Connect API Key)"、"Pigeon Developer ID Application (signing identity p12)"），.p8 只能从 Apple 下载一次，丢了要重新生成 key。
+
+要点（都踩过或对着公证要求核过，别改回去）：
+- **entitlements 按配置分两份**：`Pigeon.entitlements`（Release）= Ghostty 那套 TCC 代理项（apple-events/camera/mic/通讯录/日历/定位/照片——终端是子进程的"责任进程"，hardened runtime 下没声明就直接拒绝），配套的 NS*UsageDescription 在 project.yml。`PigeonDebug.entitlements` 多一条 `cs.disable-library-validation`：自签证书没有 Team ID，Xcode 的 debug dylib 拆分（`Pigeon.debug.dylib`）会因 "different Team IDs" 加载失败、启动即崩。Release 绝不加这条。
+- **Sparkle 嵌套组件必须重签**：Sparkle 自带的 XPC 服务/Autoupdate/Updater.app 是 ad-hoc 签名，Xcode 的 code-sign-on-copy 只重签框架外壳，公证会拒。project.yml 的 "Sign Sparkle components" post-build 脚本用本次构建身份由内向外重签（Developer ID 时带 `--timestamp`），最后由 Xcode 的 CodeSign 封印 app。
+- **公证的两个隐性要求**：安全时间戳（Release 的 `OTHER_CODE_SIGN_FLAGS: --timestamp`，`build` action 不会自动加）；不能有 `get-task-allow`（`build` action 默认注入，release.sh 传 `CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO`）。release.sh 会在提交公证前逐项校验（Authority、runtime flag、嵌套 TeamIdentifier、无 get-task-allow）。
+- release 的 derived data 在 `build/release/`（与开发实例的 `build/Build` 分开，每次全新构建），产物在 `dist/`（gitignore）。
+- 换机器 / 证书过期：Xcode → Settings → Accounts → Manage Certificates 重新申领 Developer ID Application；`security find-identity -v -p codesigning` 应看到它。
+
 ### 构建环境的坑（都已在脚本里处理，但要知道为什么）
 
 - **zig 版本必须 0.14.x**（Ghostty v1.2.3 要求；系统的 zig 0.15 编不过）。用 keg-only 的 `brew install zig@0.14`，路径 `/opt/homebrew/opt/zig@0.14/bin/zig`。
 - **zig 的 HTTP 客户端过不了本机代理**（127.0.0.1:7890，CONNECT 报 400），所以依赖不能靠 `zig build` 自己拉。`scripts/fetch-ghostty-deps.sh` 用 curl/git（走代理没问题）下载后 `zig fetch <本地路径>` 灌进 `vendor/zig-cache`，内容 hash 照常校验。
 - **iTerm2-Color-Schemes 主题包上游 404**（release asset 被删）。它是 lazy 依赖，构建时用 `-Demit-themes=false` 跳过。以后想要主题需另找该 tarball 或升级 Ghostty tag。
 - **Xcode 26 的 Metal 工具链是可选组件**，缺了会报 "cannot execute tool 'metal'"：`xcodebuild -downloadComponent MetalToolchain`。
-- **Debug 构建用本地自签证书 "Pigeon Dev" 签名**（project.yml `CODE_SIGN_IDENTITY`），新机器先跑一次 `scripts/dev-signing-setup.sh`（生成+导入+信任+partition list，中途要输两次密码）。别退回 ad-hoc（`-`）签名：代码身份每次构建都变。构建时如果 xcodebuild 长时间无输出，先查 SecurityAgent 弹框（codesign 等钥匙授权）。
+- **Debug 构建用本地自签证书 "Pigeon Dev" 签名**（project.yml Debug 的 `CODE_SIGN_IDENTITY`；Release 用 Developer ID，见上节），新机器先跑一次 `scripts/dev-signing-setup.sh`（生成+导入+信任+partition list，中途要输两次密码）。别退回 ad-hoc（`-`）签名：代码身份每次构建都变。构建时如果 xcodebuild 长时间无输出，先查 SecurityAgent 弹框（codesign 等钥匙授权）。
 - 链接需要 `-lstdc++`（libghostty-fat.a 里静态包了 harfbuzz 等 C++ 依赖），已写在 project.yml。
 - App 不能开沙盒（终端要以用户权限起 shell），和 Ghostty/iTerm2 一样。
 - **`xcodegen generate` 之后（或改了 build settings）先 `rm -rf build` 再构建**。旧 build 目录的陈旧增量状态会产出能启动但 `ghostty_surface_new` 必失败（err=OutOfMemory、开窗无 tab）的坏产物，全新目录构建就正常——已踩过，别在坏产物上浪费排查时间。

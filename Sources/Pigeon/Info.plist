@@ -22,8 +22,24 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.developer-tools</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>A program running within Pigeon would like to use AppleScript.</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>A program running within Pigeon would like to access your Calendar.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>A program running within Pigeon would like to use the camera.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>A program running within Pigeon would like to access your Contacts.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>A program running within Pigeon would like to access the local network.</string>
+	<key>NSLocationUsageDescription</key>
+	<string>A program running within Pigeon would like to access your location.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>A program running within Pigeon would like to use your microphone.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>A program running within Pigeon would like to access your Photos.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 	<key>SUEnableAutomaticChecks</key>

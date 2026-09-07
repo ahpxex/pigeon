@@ -55,6 +55,17 @@ targets:
         LSApplicationCategoryType: public.app-category.developer-tools
         NSHighResolutionCapable: true
         NSPrincipalClass: NSApplication
+        # TCC usage strings: a program running inside the terminal is
+        # attributed to Pigeon, so the prompts name Pigeon. Paired with
+        # the hardened-runtime entitlements in Pigeon.entitlements.
+        NSAppleEventsUsageDescription: A program running within Pigeon would like to use AppleScript.
+        NSCameraUsageDescription: A program running within Pigeon would like to use the camera.
+        NSMicrophoneUsageDescription: A program running within Pigeon would like to use your microphone.
+        NSContactsUsageDescription: A program running within Pigeon would like to access your Contacts.
+        NSCalendarsUsageDescription: A program running within Pigeon would like to access your Calendar.
+        NSLocationUsageDescription: A program running within Pigeon would like to access your location.
+        NSPhotoLibraryUsageDescription: A program running within Pigeon would like to access your Photos.
+        NSLocalNetworkUsageDescription: A program running within Pigeon would like to access the local network.
         # Sparkle: update feed + EdDSA public key (private key lives only
         # in GitHub secrets; see ~/.config/pigeon-dev-secrets/).
         SUFeedURL: https://github.com/ahpxex/pigeon/releases/latest/download/appcast.xml
@@ -72,12 +83,13 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         # libghostty statically links C++ dependencies (harfbuzz, etc.)
         OTHER_LDFLAGS: "-lstdc++"
-        # Stable local identity (created by scripts/dev-signing-setup.sh):
-        # ad-hoc signing would give every rebuild a new code identity and
-        # re-trigger the Keychain password prompt for stored API keys.
-        CODE_SIGN_IDENTITY: "Pigeon Dev"
         CODE_SIGN_STYLE: Manual
-        ENABLE_HARDENED_RUNTIME: false
+        # Hardened runtime in every configuration so Debug exercises the
+        # same TCC rules the notarized build ships with (lldb still
+        # attaches: xcodebuild injects get-task-allow for the `build`
+        # action; scripts/release.sh turns that off). Entitlements are
+        # per configuration below.
+        ENABLE_HARDENED_RUNTIME: true
         # A terminal cannot be sandboxed: it must spawn shells with full
         # user privileges (same as Ghostty, iTerm2, Terminal.app).
         ENABLE_APP_SANDBOX: false
@@ -92,9 +104,25 @@ targets:
           PRODUCT_BUNDLE_IDENTIFIER: dev.ahpx.pigeon.dev
           PIGEON_APP_NAME: Pigeon Dev
           ASSETCATALOG_COMPILER_APPICON_NAME: AppIconDev
+          # Stable local identity (scripts/dev-signing-setup.sh): ad-hoc
+          # signing would give every rebuild a new code identity.
+          CODE_SIGN_IDENTITY: "Pigeon Dev"
+          CODE_SIGN_ENTITLEMENTS: Sources/Pigeon/PigeonDebug.entitlements
         Release:
           PRODUCT_BUNDLE_IDENTIFIER: dev.ahpx.pigeon
           PIGEON_APP_NAME: Pigeon
+          # Distribution outside the App Store: Developer ID + hardened
+          # runtime + notarization (scripts/release.sh). Anything else
+          # (ad-hoc, self-signed) is quarantined by Gatekeeper on
+          # download. Xcode picks the "Developer ID Application" cert
+          # of this team from the keychain.
+          CODE_SIGN_IDENTITY: "Developer ID Application"
+          DEVELOPMENT_TEAM: L7GVXT64TV
+          CODE_SIGN_ENTITLEMENTS: Sources/Pigeon/Pigeon.entitlements
+          # Secure (Apple TSA) timestamp on the app's own signature —
+          # notarization rejects signatures without one, and the plain
+          # `build` action does not add it on its own.
+          OTHER_CODE_SIGN_FLAGS: --timestamp
     postBuildScripts:
       # libghostty locates its runtime resources (terminfo, shell
       # integration) at Contents/Resources/{ghostty,terminfo} relative to
@@ -116,3 +144,37 @@ targets:
           # the command_not_found_handler that routes natural language to
           # the built-in agent.
           cat "$SRCROOT/scripts/pigeon-integration.zsh" >> "$RES/ghostty/shell-integration/zsh/ghostty-integration"
+      # Sparkle ships its nested executables (XPC services, Autoupdate,
+      # Updater.app) ad-hoc signed, and Xcode's "code sign on copy" only
+      # re-signs the framework's outer bundle. Notarization requires
+      # every nested Mach-O to be Developer ID signed with the hardened
+      # runtime, so re-sign inside-out with this build's identity (the
+      # app itself is sealed by Xcode's own CodeSign step afterwards,
+      # which covers the framework's new seal). Same as Ghostty's
+      # release workflow.
+      - name: Sign Sparkle components
+        basedOnDependencyAnalysis: false
+        script: |
+          set -e
+          FW="$BUILT_PRODUCTS_DIR/$FRAMEWORKS_FOLDER_PATH/Sparkle.framework"
+          [ -d "$FW" ] || exit 0
+          IDENTITY="$EXPANDED_CODE_SIGN_IDENTITY"
+          [ -n "$IDENTITY" ] || IDENTITY="-"
+          FLAGS="--force"
+          [ "$ENABLE_HARDENED_RUNTIME" = "YES" ] && FLAGS="$FLAGS --options runtime"
+          # Secure timestamps are a notarization requirement; a
+          # self-signed or ad-hoc identity cannot get one.
+          case "$EXPANDED_CODE_SIGN_IDENTITY_NAME" in
+            "Developer ID"*|"Apple Distribution"*|"3rd Party Mac"*) FLAGS="$FLAGS --timestamp" ;;
+            *) FLAGS="$FLAGS --timestamp=none" ;;
+          esac
+          V="$FW/Versions/Current"
+          for item in \
+              "$V/XPCServices/Downloader.xpc" \
+              "$V/XPCServices/Installer.xpc" \
+              "$V/Autoupdate" \
+              "$V/Updater.app" \
+              "$FW"; do
+            [ -e "$item" ] || continue
+            /usr/bin/codesign $FLAGS --sign "$IDENTITY" "$item"
+          done
