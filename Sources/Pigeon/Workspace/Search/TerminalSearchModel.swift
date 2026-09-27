@@ -138,7 +138,7 @@ final class TerminalSearchModel: ObservableObject {
         let chars = Array(line)
         var cellAt = [Int](repeating: 0, count: chars.count + 1)
         for (i, ch) in chars.enumerated() {
-            cellAt[i + 1] = cellAt[i] + displayWidth(ch)
+            cellAt[i + 1] = cellAt[i] + Ghostty.cellWidth(ch)
         }
 
         var result: [(Int, Int)] = []
@@ -152,23 +152,6 @@ final class TerminalSearchModel: ObservableObject {
             searchStart = range.upperBound
         }
         return result
-    }
-
-    /// GUI processes start in the C locale, where wcwidth reports CJK
-    /// as narrow; force a UTF-8 ctype locale once (same as Ghostty's
-    /// standalone ensureLocale) so widths match the terminal grid.
-    private static let utf8Locale: Void = {
-        _ = setlocale(LC_CTYPE, "UTF-8")
-    }()
-
-    /// Cells occupied by one grapheme cluster: wide (CJK, most emoji)
-    /// = 2, everything else = 1. Mirrors the kernel's wcwidth-based
-    /// layout closely enough for highlight placement.
-    static func displayWidth(_ ch: Character) -> Int {
-        _ = utf8Locale
-        guard let scalar = ch.unicodeScalars.first else { return 1 }
-        let width = wcwidth(Int32(bitPattern: scalar.value))
-        return width == 2 ? 2 : 1
     }
 
     // MARK: Overlay

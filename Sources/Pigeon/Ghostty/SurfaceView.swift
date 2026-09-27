@@ -27,6 +27,14 @@ extension Ghostty {
 
         private(set) var surface: ghostty_surface_t?
 
+        /// Bumped (synchronously, from OPEN_URL) each time the kernel follows
+        /// a link; a release that leaves it unchanged was not a link click
+        /// as far as the kernel is concerned. See SurfaceLinks.swift.
+        var kernelLinkFollows = 0
+
+        /// Where the current left press started, to tell a click from a drag.
+        var leftPressOrigin: NSPoint?
+
         /// Accumulates text produced by interpretKeyEvents during keyDown
         /// so we can attach it to the libghostty key event.
         private var keyTextAccumulator: [String]? = nil
@@ -357,11 +365,29 @@ extension Ghostty {
         }
 
         override func mouseDown(with event: NSEvent) {
+            leftPressOrigin = event.locationInWindow
             sendMouseButton(event, state: GHOSTTY_MOUSE_PRESS, button: GHOSTTY_MOUSE_LEFT)
         }
 
         override func mouseUp(with event: NSEvent) {
-            sendMouseButton(event, state: GHOSTTY_MOUSE_RELEASE, button: GHOSTTY_MOUSE_LEFT)
+            let origin = leftPressOrigin
+            leftPressOrigin = nil
+            let moved = origin.map {
+                hypot($0.x - event.locationInWindow.x, $0.y - event.locationInWindow.y) > 3
+            } ?? true
+            releaseLeft(modifiers: event.modifierFlags, isSingleClick: event.clickCount == 1 && !moved)
+        }
+
+        /// Left release through the kernel, then — if the kernel did not
+        /// take it as a link — the cmd+click fallback for bare file names.
+        func releaseLeft(modifiers: NSEvent.ModifierFlags, isSingleClick: Bool) {
+            guard let surface else { return }
+            let follows = kernelLinkFollows
+            _ = ghostty_surface_mouse_button(
+                surface, GHOSTTY_MOUSE_RELEASE, GHOSTTY_MOUSE_LEFT, Ghostty.mods(modifiers))
+            if isSingleClick, kernelLinkFollows == follows {
+                followTokenLink(modifiers: modifiers)
+            }
         }
 
         override func rightMouseDown(with event: NSEvent) {
@@ -391,6 +417,35 @@ extension Ghostty {
                 pos.x,
                 frame.height - pos.y,
                 Ghostty.mods(event.modifierFlags))
+        }
+
+        /// Driver: a left click at a point in surface coordinates (points,
+        /// top-left origin) through the same kernel path as a real click
+        /// — with .command it follows links exactly like cmd+click.
+        func click(at point: CGPoint, modifiers: NSEvent.ModifierFlags) {
+            guard let surface else { return }
+            let hover = modifiers.subtracting(.command)
+            ghostty_surface_mouse_pos(surface, point.x, point.y, Ghostty.mods(hover))
+            // A real cmd+click is: pointer arrives, cmd goes down
+            // (flagsChanged — what makes the kernel re-check links under a
+            // pointer that hasn't moved), click, cmd up. Replay all of it.
+            let command = modifiers.contains(.command)
+            if command { sendModifierFlag(kVK_Command, flags: modifiers) }
+            let mods = Ghostty.mods(modifiers)
+            _ = ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_LEFT, mods)
+            releaseLeft(modifiers: modifiers, isSingleClick: true)
+            if command { sendModifierFlag(kVK_Command, flags: hover) }
+        }
+
+        private func sendModifierFlag(_ keyCode: Int, flags: NSEvent.ModifierFlags) {
+            guard let event = NSEvent.keyEvent(
+                with: .flagsChanged, location: .zero, modifierFlags: flags,
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window?.windowNumber ?? 0, context: nil,
+                characters: "", charactersIgnoringModifiers: "",
+                isARepeat: false, keyCode: UInt16(keyCode))
+            else { return }
+            flagsChanged(with: event)
         }
 
         override func mouseMoved(with event: NSEvent) { sendMousePos(event) }

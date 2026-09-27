@@ -39,6 +39,7 @@ import SwiftUI
 ///                              override for evals (in-memory only)
 ///   POST /browser/open      <- {root, preview?} open browser, optionally preview a file
 ///   POST /history/toggle    -> toggle selected tab's message history overlay
+///   POST /links/resolve, /input/click, GET /links/menu — cmd+click links (DriverServer+Links)
 final class DriverServer {
     static let shared = DriverServer()
 
@@ -708,8 +709,9 @@ final class DriverServer {
             return HTTPResponse(json: settingsJSON())
 
         default:
-            return HTTPResponse(status: 404, error: "unknown endpoint \(request.method) \(request.path)")
             if let response = handleTitlesRoute(request) { return response }
+            if let response = handleLinksRoute(request, manager: manager) { return response }
+            return HTTPResponse(status: 404, error: "unknown endpoint \(request.method) \(request.path)")
         }
     }
 

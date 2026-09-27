@@ -31,6 +31,23 @@ enum Ghostty {
 
         return ghostty_input_mods_e(mods)
     }
+
+    /// Cells occupied by one grapheme cluster in the terminal grid: wide
+    /// (CJK, most emoji) = 2, everything else = 1. Mirrors the kernel's
+    /// wcwidth-based layout closely enough to map dumped row text back to
+    /// cell columns (search highlights, the token under a click).
+    static func cellWidth(_ ch: Character) -> Int {
+        _ = utf8Locale
+        guard let scalar = ch.unicodeScalars.first else { return 1 }
+        return wcwidth(Int32(bitPattern: scalar.value)) == 2 ? 2 : 1
+    }
+
+    /// GUI processes start in the C locale, where wcwidth reports CJK
+    /// as narrow; force a UTF-8 ctype locale once (same as Ghostty's
+    /// standalone ensureLocale) so widths match the terminal grid.
+    private static let utf8Locale: Void = {
+        _ = setlocale(LC_CTYPE, "UTF-8")
+    }()
 }
 
 extension NSEvent {

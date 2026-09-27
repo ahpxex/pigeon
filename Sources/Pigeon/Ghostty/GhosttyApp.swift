@@ -273,10 +273,33 @@ extension Ghostty {
             case GHOSTTY_ACTION_OPEN_URL:
                 let v = action.action.open_url
                 guard let cUrl = v.url else { return false }
-                let urlString = String(decoding: UnsafeRawBufferPointer(
+                let text = String(decoding: UnsafeRawBufferPointer(
                     start: cUrl, count: Int(v.len)), as: UTF8.self)
-                guard let url = URL(string: urlString) else { return false }
-                DispatchQueue.main.async { NSWorkspace.shared.open(url) }
+                let view = target.tag == GHOSTTY_TARGET_SURFACE
+                    ? surfaceView(of: target.target.surface) : nil
+                let kind = v.kind
+                // Link clicks arrive synchronously inside the view's mouse
+                // release; tell it the kernel took this click so its
+                // bare-name fallback stays out of the way.
+                if Thread.isMainThread {
+                    MainActor.assumeIsolated { view?.kernelLinkFollows += 1 }
+                }
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        // Relative paths are relative to the tab's shell
+                        // cwd (OSC 7), not to Pigeon's own.
+                        var link = TerminalLink.resolve(text, cwd: view?.pwd)
+                        if let view { link = view.addingPointerLocation(to: link) }
+                        if kind == GHOSTTY_ACTION_OPEN_URL_KIND_TEXT,
+                           case .file(let target) = link, !target.isDirectory {
+                            TerminalLinkMenu.openAsText(target.url)
+                        } else if let view {
+                            TerminalLinkMenu.present(link, in: view)
+                        } else if case .url(let url) = link {
+                            NSWorkspace.shared.open(url)
+                        }
+                    }
+                }
                 return true
 
             case GHOSTTY_ACTION_MOUSE_SHAPE:
