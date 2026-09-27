@@ -30,6 +30,8 @@ struct AgentSettingsTab: View {
                     .id(provider.id)
             }
 
+            DecisionModelSection()
+
             ActivityHooksSection()
         }
         .formStyle(.grouped)
@@ -108,6 +110,18 @@ private struct ProviderSection: View {
                 }
             }
 
+            if !provider.models.isEmpty {
+                Picker("Tab title model", selection: binding(\.titleModel)) {
+                    Text("Same as agent").tag(String?.none)
+                    ForEach(provider.models, id: \.self) { model in
+                        Text(model).tag(String?.some(model))
+                    }
+                }
+                Text("AI tab titles are short and frequent — a small, non-reasoning model is plenty.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             if let fetchError {
                 Text(fetchError)
                     .font(.caption)
@@ -168,6 +182,9 @@ private struct ProviderSection: View {
                 current.models = models
                 if !models.contains(current.selectedModel) {
                     current.selectedModel = models.first ?? ""
+                }
+                if let titleModel = current.titleModel, !models.contains(titleModel) {
+                    current.titleModel = nil
                 }
                 agent.update(current)
             } catch {

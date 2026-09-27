@@ -16,85 +16,26 @@ import Network
 /// SSE text goes out in 7-char chunks so markdown tokens split across
 /// deltas, exercising the streaming renderer.
 final class MockLLM {
-    private let listener: NWListener
+    private var server: MockHTTPServer?
     private let scenarios: [[String: Any]]
-    private let queue = DispatchQueue(label: "pigeon-eval.mock")
 
     static func start(scenarios: [[String: Any]]) async throws -> MockLLM {
-        let params = NWParameters.tcp
-        params.requiredLocalEndpoint = NWEndpoint.hostPort(host: "127.0.0.1", port: .any)
-        let listener = try NWListener(using: params)
-        let mock = MockLLM(listener: listener, scenarios: scenarios)
-
-        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
-            var resumed = false
-            listener.stateUpdateHandler = { state in
-                guard !resumed else { return }
-                switch state {
-                case .ready: resumed = true; cont.resume()
-                case .failed(let error): resumed = true; cont.resume(throwing: error)
-                default: break
-                }
-            }
-            listener.start(queue: mock.queue)
+        let mock = MockLLM(scenarios: scenarios)
+        mock.server = try await MockHTTPServer.start(label: "pigeon-eval.mock-llm") {
+            [weak mock] request, connection in
+            await mock?.respond(connection, body: request.body)
         }
         return mock
     }
 
-    private init(listener: NWListener, scenarios: [[String: Any]]) {
-        self.listener = listener
+    private init(scenarios: [[String: Any]]) {
         self.scenarios = scenarios
-        listener.newConnectionHandler = { [weak self] connection in
-            guard let self else { return }
-            connection.start(queue: self.queue)
-            self.receive(connection, buffer: Data())
-        }
     }
 
-    /// Actual bound port (listener.port is only valid once ready).
-    var boundPort: UInt16 { listener.port?.rawValue ?? 0 }
+    var boundPort: UInt16 { server?.boundPort ?? 0 }
 
     func stop() {
-        listener.cancel()
-    }
-
-    // MARK: Request handling
-
-    private func receive(_ connection: NWConnection, buffer: Data) {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 256 * 1024) {
-            [weak self] data, _, complete, error in
-            guard let self, error == nil else {
-                connection.cancel()
-                return
-            }
-            var buffer = buffer
-            if let data { buffer.append(data) }
-
-            if let body = Self.completeBody(of: buffer) {
-                Task { await self.respond(connection, body: body) }
-            } else if complete || buffer.count > 4 * 1024 * 1024 {
-                connection.cancel()
-            } else {
-                self.receive(connection, buffer: buffer)
-            }
-        }
-    }
-
-    /// Body once the full Content-Length worth of bytes arrived.
-    private static func completeBody(of data: Data) -> Data? {
-        guard let headerEnd = data.range(of: Data("\r\n\r\n".utf8)),
-              let head = String(data: data[..<headerEnd.lowerBound], encoding: .utf8)
-        else { return nil }
-        var contentLength = 0
-        for line in head.components(separatedBy: "\r\n").dropFirst() {
-            let kv = line.split(separator: ":", maxSplits: 1)
-            if kv.count == 2, kv[0].lowercased() == "content-length" {
-                contentLength = Int(kv[1].trimmingCharacters(in: .whitespaces)) ?? 0
-            }
-        }
-        let bodyStart = headerEnd.upperBound
-        guard data.count - bodyStart >= contentLength else { return nil }
-        return data.subdata(in: bodyStart..<(bodyStart + contentLength))
+        server?.stop()
     }
 
     private func respond(_ connection: NWConnection, body: Data) async {
@@ -116,11 +57,11 @@ final class MockLLM {
             turn["text"] = "user_count=\(userCount)\n"
         }
 
-        send(connection, raw: "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n")
+        MockHTTPServer.send(connection, raw: "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n")
 
         func sse(_ payload: [String: Any]) {
             let data = (try? JSONSerialization.data(withJSONObject: payload)) ?? Data()
-            sendChunk(connection, "data: " + String(decoding: data, as: UTF8.self) + "\n\n")
+            MockHTTPServer.sendChunk(connection, "data: " + String(decoding: data, as: UTF8.self) + "\n\n")
         }
         func delta(_ d: [String: Any], finish: String? = nil) {
             sse(["choices": [["delta": d, "finish_reason": finish as Any]]])
@@ -152,10 +93,8 @@ final class MockLLM {
         }
 
         delta([:], finish: calls.isEmpty ? "stop" : "tool_calls")
-        sendChunk(connection, "data: [DONE]\n\n")
-        connection.send(
-            content: Data("0\r\n\r\n".utf8),
-            completion: .contentProcessed { _ in connection.cancel() })
+        MockHTTPServer.sendChunk(connection, "data: [DONE]\n\n")
+        MockHTTPServer.finishChunked(connection)
     }
 
     private func pickTurn(prompt: String, round: Int) -> [String: Any] {
@@ -168,20 +107,5 @@ final class MockLLM {
                 : ["text": "mock: scenario ran out of turns\n"]
         }
         return ["text": "mock: no scenario matched this prompt\n"]
-    }
-
-    // MARK: Low-level send
-
-    private func send(_ connection: NWConnection, raw: String) {
-        connection.send(content: Data(raw.utf8), completion: .contentProcessed { _ in })
-    }
-
-    private func sendChunk(_ connection: NWConnection, _ text: String) {
-        let data = Data(text.utf8)
-        guard !data.isEmpty else { return }
-        var frame = Data(String(format: "%X\r\n", data.count).utf8)
-        frame.append(data)
-        frame.append(Data("\r\n".utf8))
-        connection.send(content: frame, completion: .contentProcessed { _ in })
     }
 }

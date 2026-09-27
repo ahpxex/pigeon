@@ -14,7 +14,7 @@ final class TabActivityMonitor {
         /// User prompts supplied by busy hooks, oldest first. The title
         /// summarizer uses these instead of sampling the terminal screen
         /// at Enter time.
-        var recentSubmits: [String] = []
+        var recentSubmits: [Submit] = []
         /// Monotonic count of user submissions to the coding agent: a
         /// busy hook that starts a new work interval, or one carrying a
         /// prompt while work is already running (a queued follow-up).
@@ -42,6 +42,13 @@ final class TabActivityMonitor {
         var workSecondsSinceSubmit: TimeInterval {
             max(0, workSeconds - workSecondsAtSubmit)
         }
+    }
+
+    struct Submit {
+        /// The `submitCount` this prompt was submitted as, so consumers
+        /// can tell which prompts arrived after a point they recorded.
+        let number: Int
+        let prompt: String
     }
 
     private static let maxSubmitSnapshots = 3
@@ -139,7 +146,11 @@ final class TabActivityMonitor {
     private func record(prompt: String, in activity: inout Activity) {
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        activity.recentSubmits.append(String(trimmed.prefix(Self.maxSubmitLength)))
+        // A prompt always counts as a submission (see the busy case), so
+        // the current count is this prompt's number.
+        activity.recentSubmits.append(Submit(
+            number: activity.submitCount,
+            prompt: String(trimmed.prefix(Self.maxSubmitLength))))
         if activity.recentSubmits.count > Self.maxSubmitSnapshots {
             activity.recentSubmits.removeFirst(
                 activity.recentSubmits.count - Self.maxSubmitSnapshots)

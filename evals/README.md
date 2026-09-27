@@ -16,6 +16,13 @@ mock LLM 在 runner 进程内起（NWListener SSE），没有子进程。⚠️ 
 | `cases/regression.json` | 确定性回归：渲染、工具循环、确认协议、记忆、拒绝逻辑 | 进程内 mock（脚本化 turns） |
 | `cases/live.json` | 质量评测:典型微任务的行为断言 + 延迟 | 真实 Provider（须已在设置里配好 key） |
 
+| `cases/titles-live.json` | AI 标题门控：真实 Jev 在标注 prompt 上的 keep/change 判断，打印概率供校准阈值 | 真实 TypeSafe（须已在设置 Decision Model 配好 key） |
+
+`regression.json` 里还有两类标题用例（mock，无网络）：`judge`+`systemone` 走 driver
+`/titles/judge` 验 `TitleChangeJudge` 的阈值分流、失败回退、请求形状；`title_flow`
+在真实 tab 上用 `/tabs/activity` 模拟提交，端到端断言每次提交调了哪个模型、标题变成什么
+（每步约 10–15s，受 summarizer 的 3s/4s/5s tick 节奏限制）。
+
 每次运行还固定执行**安全预检**：`/ask` 和 `/confirm` 对无 token / 错 token /
 带 Origin / 非 loopback Host 的请求必须全部 403。
 
@@ -26,6 +33,7 @@ scripts/pigeonctl launch                 # 前提：app 在驱动模式下运行
 scripts/eval                             # 回归套件（无网络、无 key）
 scripts/eval --suite evals/cases/live.json --live --provider DeepSeek
 scripts/eval --only markdown --verbose   # 过滤 + 失败时打印输出
+scripts/eval --suite evals/cases/titles-live.json --live   # 真实 Jev 标题判断
 ```
 
 退出码非 0 即有失败。runner 结束时恢复原默认 Provider，清理 `PigeonEvalMock`
@@ -51,6 +59,19 @@ schema（JSON，见 `cases/*.json`）：
   用 `\u001b` 写 ESC）/ `count`(+`n`) / `tool_used` / `max_lines`(`n`) /
   `max_seconds`(`n`) / `no_error` / `fixture_exists`(+可选 `contains`) /
   `fixture_missing` / `single_trailing_newline`。
+
+标题用例 schema：
+
+- `judge`：`{currentTitle, earlierRequests?, newRequests}`，原样 POST 给 `/titles/judge`。
+  带 `systemone`（mock 应答：`{relation, confidence, fits}` / `{"http": 500}` /
+  `{..., "omit": "title_fits"}`）是回归用例，断言 `expect_verdict`（keep/retitle/undecided）
+  和 `expect_error`；mock 按 `newRequests` 拼接串匹配，用例间别互为子串。不带 `systemone`
+  是 live 用例，`expect` 为 `keep`/`change`；汇总行分开报 false keep（标题过期，真错误，
+  判失败）和 missed keep（多花一次标题调用，只计数不判失败——如 "2" 这种回答 agent 选项的
+  prompt 本身信息不足，退回生成才是对的）。
+- `title_flow`：步骤数组 `{prompt, llm_title?, systemone?, decision_model?(默认 true),
+  expect: {titleRequests, judgeRequests, aiTitle?, verdict?}}`，计数是累计值。prompt 同时
+  是 mock LLM / mock System One 的匹配 marker，要唯一。
 
 mock 的 SSE 按 7 字符切 chunk，天然覆盖"markdown 标记跨 chunk 边界"的场景。
 

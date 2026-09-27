@@ -1,0 +1,459 @@
+[
+  {
+    "name": "keep-zh-continue",
+    "judge": {
+      "currentTitle": "登录表单校验",
+      "earlierRequests": [
+        "实现登录页面的表单校验，邮箱和密码都要校验"
+      ],
+      "newRequests": [
+        "继续"
+      ]
+    },
+    "expect": "keep"
+  },
+  {
+    "name": "keep-zh-approve-plan",
+    "judge": {
+      "currentTitle": "登录表单校验",
+      "earlierRequests": [
+        "实现登录页面的表单校验，邮箱和密码都要校验"
+      ],
+      "newRequests": [
+        "好的，就按你说的方案改"
+      ]
+    },
+    "expect": "keep"
+  },
+  {
+    "name": "keep-zh-tweak-same-feature",
+    "judge": {
+      "currentTitle": "登录表单校验",
+      "earlierRequests": [
+        "实现登录页面的表单校验，邮箱和密码都要校验"
+      ],
+      "newRequests": [
+        "密码长度不够时的错误提示改成中文"
+      ]
+    },
+    "expect": "keep"
+  },
+  {
+    "name": "keep-zh-still-broken",
+    "judge": {
+      "currentTitle": "修复 CI lint",
+      "earlierRequests": [
+        "CI 的 lint 挂了，帮我修一下"
+      ],
+      "newRequests": [
+        "还有一个 lint 错误没修掉，再看看"
+      ]
+    },
+    "expect": "keep"
+  },
+  {
+    "name": "keep-en-yes",
+    "judge": {
+      "currentTitle": "Fix login 401",
+      "earlierRequests": [
+        "login returns 401 for valid users, find out why"
+      ],
+      "newRequests": [
+        "yes"
+      ]
+    },
+    "expect": "keep"
+  },
+  {
+    "name": "keep-en-followup-same-bug",
+    "judge": {
+      "currentTitle": "Fix login 401",
+      "earlierRequests": [
+        "login returns 401 for valid users, find out why"
+      ],
+      "newRequests": [
+        "still getting 401 after your change, check the token refresh"
+      ]
+    },
+    "expect": "keep"
+  },
+  {
+    "name": "keep-zh-run-tests-for-goal",
+    "judge": {
+      "currentTitle": "迁移到 Swift 6",
+      "earlierRequests": [
+        "把项目迁移到 Swift 6 严格并发模式"
+      ],
+      "newRequests": [
+        "跑一下测试看看有没有挂的"
+      ]
+    },
+    "expect": "keep"
+  },
+  {
+    "name": "keep-zh-comment-refactor",
+    "judge": {
+      "currentTitle": "重构 Tab 侧边栏",
+      "earlierRequests": [
+        "TabSidebar 太长了，拆一下"
+      ],
+      "newRequests": [
+        "把刚才拆出来的文件也加上注释"
+      ]
+    },
+    "expect": "keep"
+  },
+  {
+    "name": "keep-en-answer-option",
+    "judge": {
+      "currentTitle": "Dark mode support",
+      "earlierRequests": [
+        "add dark mode to the settings page"
+      ],
+      "newRequests": [
+        "2"
+      ]
+    },
+    "expect": "keep"
+  },
+  {
+    "name": "keep-zh-explain",
+    "judge": {
+      "currentTitle": "优化首页加载速度",
+      "earlierRequests": [
+        "首页加载太慢了，优化一下"
+      ],
+      "newRequests": [
+        "为什么这么改？解释一下"
+      ]
+    },
+    "expect": "keep"
+  },
+  {
+    "name": "keep-zh-commit-it",
+    "judge": {
+      "currentTitle": "添加导出 CSV 功能",
+      "earlierRequests": [
+        "给报表页加一个导出 CSV 的按钮"
+      ],
+      "newRequests": [
+        "可以",
+        "提交吧"
+      ]
+    },
+    "expect": "keep"
+  },
+  {
+    "name": "keep-zh-retry",
+    "judge": {
+      "currentTitle": "升级依赖版本",
+      "earlierRequests": [
+        "把依赖都升级到最新版本"
+      ],
+      "newRequests": [
+        "网络超时了，再试一次"
+      ]
+    },
+    "expect": "keep"
+  },
+  {
+    "name": "change-zh-port-lookup",
+    "judge": {
+      "currentTitle": "登录表单校验",
+      "earlierRequests": [
+        "实现登录页面的表单校验，邮箱和密码都要校验"
+      ],
+      "newRequests": [
+        "帮我看看 3000 端口是什么进程"
+      ]
+    },
+    "expect": "change"
+  },
+  {
+    "name": "change-zh-readme",
+    "judge": {
+      "currentTitle": "登录表单校验",
+      "earlierRequests": [
+        "实现登录页面的表单校验，邮箱和密码都要校验"
+      ],
+      "newRequests": [
+        "写一下 README 的安装说明"
+      ]
+    },
+    "expect": "change"
+  },
+  {
+    "name": "change-zh-next-feature",
+    "judge": {
+      "currentTitle": "修复 CI lint",
+      "earlierRequests": [
+        "CI 的 lint 挂了，帮我修一下"
+      ],
+      "newRequests": [
+        "接下来做暗色模式"
+      ]
+    },
+    "expect": "change"
+  },
+  {
+    "name": "change-en-pagination",
+    "judge": {
+      "currentTitle": "Fix login 401",
+      "earlierRequests": [
+        "login returns 401 for valid users, find out why"
+      ],
+      "newRequests": [
+        "now add pagination to the users table"
+      ]
+    },
+    "expect": "change"
+  },
+  {
+    "name": "change-zh-release-script",
+    "judge": {
+      "currentTitle": "迁移到 Swift 6",
+      "earlierRequests": [
+        "把项目迁移到 Swift 6 严格并发模式"
+      ],
+      "newRequests": [
+        "帮我写个发布脚本"
+      ]
+    },
+    "expect": "change"
+  },
+  {
+    "name": "change-zh-by-the-way-other-feature",
+    "judge": {
+      "currentTitle": "重构 Tab 侧边栏",
+      "earlierRequests": [
+        "TabSidebar 太长了，拆一下"
+      ],
+      "newRequests": [
+        "顺便把设置页的字体选择器也重做一下"
+      ]
+    },
+    "expect": "change"
+  },
+  {
+    "name": "change-en-other-bug",
+    "judge": {
+      "currentTitle": "Dark mode support",
+      "earlierRequests": [
+        "add dark mode to the settings page"
+      ],
+      "newRequests": [
+        "the CSV export crashes on empty rows, fix it"
+      ]
+    },
+    "expect": "change"
+  },
+  {
+    "name": "change-zh-ack-then-new-task",
+    "judge": {
+      "currentTitle": "优化首页加载速度",
+      "earlierRequests": [
+        "首页加载太慢了，优化一下"
+      ],
+      "newRequests": [
+        "好的。另外帮我把 logo 换成新的 svg"
+      ]
+    },
+    "expect": "change"
+  },
+  {
+    "name": "change-zh-continue-then-new-feature",
+    "judge": {
+      "currentTitle": "添加导出 CSV 功能",
+      "earlierRequests": [
+        "给报表页加一个导出 CSV 的按钮"
+      ],
+      "newRequests": [
+        "继续",
+        "再加一个导入 CSV 的功能"
+      ]
+    },
+    "expect": "change"
+  },
+  {
+    "name": "change-zh-abandon-and-switch",
+    "judge": {
+      "currentTitle": "升级依赖版本",
+      "earlierRequests": [
+        "把依赖都升级到最新版本"
+      ],
+      "newRequests": [
+        "算了不升级了，帮我排查一下内存泄漏"
+      ]
+    },
+    "expect": "change"
+  },
+  {
+    "name": "change-en-commit-then-docker",
+    "judge": {
+      "currentTitle": "Fix login 401",
+      "earlierRequests": [
+        "login returns 401 for valid users, find out why"
+      ],
+      "newRequests": [
+        "commit this and then set up the docker compose file"
+      ]
+    },
+    "expect": "change"
+  },
+  {
+    "name": "heldout-keep-zh-lint-status",
+    "judge": {
+      "currentTitle": "修复 CI lint",
+      "earlierRequests": [
+        "CI 的 lint 挂了，帮我修一下"
+      ],
+      "newRequests": [
+        "lint 现在过了吗？"
+      ]
+    },
+    "expect": "keep"
+  },
+  {
+    "name": "heldout-keep-en-write-tests",
+    "judge": {
+      "currentTitle": "Add CSV export",
+      "earlierRequests": [
+        "add a CSV export button to the reports page"
+      ],
+      "newRequests": [
+        "write tests for it"
+      ]
+    },
+    "expect": "keep"
+  },
+  {
+    "name": "heldout-keep-zh-commit",
+    "judge": {
+      "currentTitle": "优化首页加载速度",
+      "earlierRequests": [
+        "首页加载太慢了，优化一下"
+      ],
+      "newRequests": [
+        "把刚才的改动 commit 一下"
+      ]
+    },
+    "expect": "keep"
+  },
+  {
+    "name": "heldout-keep-zh-migration-warning",
+    "judge": {
+      "currentTitle": "迁移到 Swift 6",
+      "earlierRequests": [
+        "把项目迁移到 Swift 6 严格并发模式"
+      ],
+      "newRequests": [
+        "这个 Sendable closure captures 的警告要不要管？"
+      ]
+    },
+    "expect": "keep"
+  },
+  {
+    "name": "heldout-keep-zh-regression-from-refactor",
+    "judge": {
+      "currentTitle": "重构 Tab 侧边栏",
+      "earlierRequests": [
+        "TabSidebar 太长了，拆一下"
+      ],
+      "newRequests": [
+        "不对，拆完之后拖拽排序坏了，修一下"
+      ]
+    },
+    "expect": "keep"
+  },
+  {
+    "name": "heldout-keep-en-refine-toggle",
+    "judge": {
+      "currentTitle": "Dark mode support",
+      "earlierRequests": [
+        "add dark mode to the settings page"
+      ],
+      "newRequests": [
+        "make the toggle follow the system appearance too"
+      ]
+    },
+    "expect": "keep"
+  },
+  {
+    "name": "heldout-change-zh-weather",
+    "judge": {
+      "currentTitle": "修复 CI lint",
+      "earlierRequests": [
+        "CI 的 lint 挂了，帮我修一下"
+      ],
+      "newRequests": [
+        "帮我查一下今天的天气"
+      ]
+    },
+    "expect": "change"
+  },
+  {
+    "name": "heldout-change-en-error-meaning",
+    "judge": {
+      "currentTitle": "Add CSV export",
+      "earlierRequests": [
+        "add a CSV export button to the reports page"
+      ],
+      "newRequests": [
+        "what does ECONNRESET mean when running npm install?"
+      ]
+    },
+    "expect": "change"
+  },
+  {
+    "name": "heldout-change-zh-commit-then-rate-limit",
+    "judge": {
+      "currentTitle": "优化首页加载速度",
+      "earlierRequests": [
+        "首页加载太慢了，优化一下"
+      ],
+      "newRequests": [
+        "commit 一下，然后帮我给 API 加限流"
+      ]
+    },
+    "expect": "change"
+  },
+  {
+    "name": "heldout-change-zh-readme-badge",
+    "judge": {
+      "currentTitle": "迁移到 Swift 6",
+      "earlierRequests": [
+        "把项目迁移到 Swift 6 严格并发模式"
+      ],
+      "newRequests": [
+        "给 README 加个构建状态 badge"
+      ]
+    },
+    "expect": "change"
+  },
+  {
+    "name": "heldout-change-zh-port",
+    "judge": {
+      "currentTitle": "重构 Tab 侧边栏",
+      "earlierRequests": [
+        "TabSidebar 太长了，拆一下"
+      ],
+      "newRequests": [
+        "看下 8080 端口谁在用"
+      ]
+    },
+    "expect": "change"
+  },
+  {
+    "name": "heldout-change-en-thanks-then-onboarding",
+    "judge": {
+      "currentTitle": "Dark mode support",
+      "earlierRequests": [
+        "add dark mode to the settings page"
+      ],
+      "newRequests": [
+        "ok thanks. now let's work on the onboarding flow"
+      ]
+    },
+    "expect": "change"
+  }
+]

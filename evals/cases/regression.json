@@ -835,5 +835,175 @@
         "value": "cannot write files with curl"
       }
     ]
+  },
+  {
+    "name": "title-judge-keep-confident-same-task",
+    "judge": {
+      "currentTitle": "登录表单校验",
+      "earlierRequests": [
+        "实现登录页面的表单校验"
+      ],
+      "newRequests": [
+        "judge-k1 继续"
+      ]
+    },
+    "systemone": {
+      "relation": "same_task",
+      "confidence": 0.9,
+      "fits": 0.9
+    },
+    "expect_verdict": "keep",
+    "expect_error": false
+  },
+  {
+    "name": "title-judge-same-task-but-title-misfits",
+    "judge": {
+      "currentTitle": "登录表单校验",
+      "earlierRequests": [],
+      "newRequests": [
+        "judge-k2 顺便改下注册页"
+      ]
+    },
+    "systemone": {
+      "relation": "same_task",
+      "confidence": 0.9,
+      "fits": 0.2
+    },
+    "expect_verdict": "undecided",
+    "expect_error": false
+  },
+  {
+    "name": "title-judge-low-confidence-falls-back",
+    "judge": {
+      "currentTitle": "登录表单校验",
+      "earlierRequests": [],
+      "newRequests": [
+        "judge-k3 看看这个"
+      ]
+    },
+    "systemone": {
+      "relation": "same_task",
+      "confidence": 0.3,
+      "fits": 0.9
+    },
+    "expect_verdict": "undecided",
+    "expect_error": false
+  },
+  {
+    "name": "title-judge-new-task-retitles",
+    "judge": {
+      "currentTitle": "登录表单校验",
+      "earlierRequests": [],
+      "newRequests": [
+        "judge-k4 帮我写发布脚本"
+      ]
+    },
+    "systemone": {
+      "relation": "new_task",
+      "confidence": 0.8,
+      "fits": 0.1
+    },
+    "expect_verdict": "retitle",
+    "expect_error": false
+  },
+  {
+    "name": "title-judge-http-error-falls-back",
+    "judge": {
+      "currentTitle": "登录表单校验",
+      "earlierRequests": [],
+      "newRequests": [
+        "judge-k5 继续"
+      ]
+    },
+    "systemone": {
+      "http": 500
+    },
+    "expect_verdict": "undecided",
+    "expect_error": true
+  },
+  {
+    "name": "title-judge-partial-answer-falls-back",
+    "judge": {
+      "currentTitle": "登录表单校验",
+      "earlierRequests": [],
+      "newRequests": [
+        "judge-k6 继续"
+      ]
+    },
+    "systemone": {
+      "relation": "same_task",
+      "confidence": 0.9,
+      "omit": "title_fits"
+    },
+    "expect_verdict": "undecided",
+    "expect_error": true
+  },
+  {
+    "name": "title-flow-judge-gates-title-model",
+    "title_flow": [
+      {
+        "prompt": "flow-a1 实现登录页面的表单校验",
+        "llm_title": "登录表单校验",
+        "expect": {
+          "titleRequests": 1,
+          "judgeRequests": 0,
+          "aiTitle": "登录表单校验"
+        }
+      },
+      {
+        "prompt": "flow-a2 继续",
+        "systemone": {
+          "relation": "same_task",
+          "confidence": 0.9,
+          "fits": 0.9
+        },
+        "expect": {
+          "titleRequests": 1,
+          "judgeRequests": 1,
+          "aiTitle": "登录表单校验",
+          "verdict": "keep"
+        }
+      },
+      {
+        "prompt": "flow-a3 换个事：修一下 CI 里的 lint 报错",
+        "systemone": {
+          "relation": "new_task",
+          "confidence": 0.85,
+          "fits": 0.05
+        },
+        "llm_title": "修复 CI lint",
+        "expect": {
+          "titleRequests": 2,
+          "judgeRequests": 2,
+          "aiTitle": "修复 CI lint",
+          "verdict": "retitle"
+        }
+      },
+      {
+        "prompt": "flow-a4 顺便看看测试",
+        "systemone": {
+          "relation": "same_task",
+          "confidence": 0.4,
+          "fits": 0.6
+        },
+        "llm_title": "CI lint 与测试",
+        "expect": {
+          "titleRequests": 3,
+          "judgeRequests": 3,
+          "aiTitle": "CI lint 与测试",
+          "verdict": "undecided"
+        }
+      },
+      {
+        "prompt": "flow-a5 好的",
+        "decision_model": false,
+        "llm_title": "CI lint 收尾",
+        "expect": {
+          "titleRequests": 4,
+          "judgeRequests": 3,
+          "aiTitle": "CI lint 收尾"
+        }
+      }
+    ]
   }
 ]

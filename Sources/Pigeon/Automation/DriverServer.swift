@@ -33,6 +33,10 @@ import SwiftUI
 ///   POST /agent/provider    <- {name, baseURL, model, apiKey?} upsert + set default
 ///   POST /agent/default     <- {name, model?} switch default only, no mutation
 ///   POST /agent/provider/remove <- {name} (custom providers only)
+///   GET  /titles/state      -> per-tab AI-title bookkeeping (DriverServer+Titles)
+///   POST /titles/judge      <- {currentTitle, earlierRequests, newRequests}
+///   GET/POST /agent/systemone, POST /agent/systemone/clear — decision-model
+///                              override for evals (in-memory only)
 ///   POST /browser/open      <- {root, preview?} open browser, optionally preview a file
 ///   POST /history/toggle    -> toggle selected tab's message history overlay
 final class DriverServer {
@@ -92,7 +96,7 @@ final class DriverServer {
         }
     }
 
-    private struct HTTPRequest {
+    struct HTTPRequest {
         let method: String
         let path: String
         let query: [String: String]
@@ -135,7 +139,7 @@ final class DriverServer {
         }
     }
 
-    private struct HTTPResponse {
+    struct HTTPResponse {
         var status = 200
         var contentType = "application/json"
         var body: Data
@@ -172,8 +176,13 @@ final class DriverServer {
 
     private func handle(_ request: HTTPRequest, completion: @escaping (HTTPResponse) -> Void) {
         // All app/libghostty state must be touched on the main thread.
-        DispatchQueue.main.async {
-            let response = self.handleOnMain(request)
+        Task { @MainActor in
+            let response: HTTPResponse
+            if let asyncResponse = await self.handleAsyncOnMain(request) {
+                response = asyncResponse
+            } else {
+                response = self.handleOnMain(request)
+            }
             self.queue.async { completion(response) }
         }
     }
@@ -700,6 +709,7 @@ final class DriverServer {
 
         default:
             return HTTPResponse(status: 404, error: "unknown endpoint \(request.method) \(request.path)")
+            if let response = handleTitlesRoute(request) { return response }
         }
     }
 

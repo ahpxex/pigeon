@@ -26,9 +26,11 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(labelStyle.rawValue, forKey: "labelStyle") }
     }
 
-    /// Name each tab once with an AI summary of its activity, triggered
-    /// when the terminal has produced enough output (TabTitleSummarizer).
-    /// The right-click "Summarize Title" action works regardless.
+    /// Name tabs with an AI summary of what the user is asking a coding
+    /// agent to do, refreshed once per submitted prompt (and only when
+    /// the task changed, if a decision model is configured) — see
+    /// TabTitleSummarizer. The right-click "Summarize Title" action works
+    /// regardless.
     @Published var aiTabTitles: Bool {
         didSet { defaults.set(aiTabTitles, forKey: "aiTabTitles") }
     }

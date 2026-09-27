@@ -19,7 +19,7 @@ struct GeneralSettingsTab: View {
                     .foregroundStyle(.secondary)
 
                 Toggle("AI tab titles", isOn: $settings.aiTabTitles)
-                Text("Names each tab once — after it has produced enough output — using the AI provider from the Agent tab. Right-click a tab and choose Summarize Title to refresh anytime; a manual rename always wins.")
+                Text("Names each tab after what you ask its coding agent to do, refreshed as you send new prompts, using the AI provider from the Agent tab (a decision model there skips refreshes when you’re continuing the same task). Right-click a tab and choose Summarize Title to refresh anytime; a manual rename always wins.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 

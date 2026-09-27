@@ -131,11 +131,21 @@ do {
     exit(2)
 }
 
-let mockCases = allCases.filter { $0["turns"] != nil }
-var liveCases = allCases.filter { $0["turns"] == nil }
-if !liveCases.isEmpty && !args.live {
-    print("note: skipping \(liveCases.count) live case(s) — pass --live to run them")
+// Case kinds: /ask cases (scripted `turns` = mock, else live), title
+// judge cases (`judge`; scripted `systemone` = mock, else live), and
+// end-to-end title flows (`title_flow`, always mock). See TitleEvals.
+let judgeCases = allCases.filter { $0["judge"] != nil }
+let mockJudgeCases = judgeCases.filter { $0["systemone"] != nil }
+var liveJudgeCases = judgeCases.filter { $0["systemone"] == nil }
+let flowCases = allCases.filter { $0["title_flow"] != nil }
+let askCases = allCases.filter { $0["judge"] == nil && $0["title_flow"] == nil }
+let mockCases = askCases.filter { $0["turns"] != nil }
+var liveCases = askCases.filter { $0["turns"] == nil }
+let skippedLive = liveCases.count + liveJudgeCases.count
+if skippedLive > 0 && !args.live {
+    print("note: skipping \(skippedLive) live case(s) — pass --live to run them")
     liveCases = []
+    liveJudgeCases = []
 }
 
 let info: [String: Any]
@@ -160,13 +170,18 @@ if securityFailures.isEmpty {
 }
 
 var results: [CaseResult] = []
+var abortReason: String? = nil
 var mock: MockLLM? = nil
+var systemOneMock: MockSystemOne? = nil
+let savedSettings = try? await AgentClient.driver("GET", "/settings")
 
 do {
-    if !mockCases.isEmpty {
+    let flowScenarios = TitleEvals.scenarios(for: flowCases)
+
+    if !mockCases.isEmpty || !flowCases.isEmpty {
         let scenarios = mockCases.map { testCase -> [String: Any] in
             ["match": testCase["prompt"] as? String ?? "", "turns": testCase["turns"] ?? []]
-        }
+        } + flowScenarios.llm
         let started = try await MockLLM.start(scenarios: scenarios)
         mock = started
         _ = try await AgentClient.driver("POST", "/agent/provider", body: [
@@ -175,8 +190,34 @@ do {
             "model": "mock-1",
             "apiKey": "eval",
         ])
-        print("\n== regression (\(mockCases.count) cases, mock llm :\(started.boundPort)) ==")
-        results += await runCases(mockCases, agentPort: agentPort, token: token, args: args)
+        if !mockCases.isEmpty {
+            print("\n== regression (\(mockCases.count) cases, mock llm :\(started.boundPort)) ==")
+            results += await runCases(mockCases, agentPort: agentPort, token: token, args: args)
+        }
+    }
+
+    if !mockJudgeCases.isEmpty || !flowCases.isEmpty {
+        let judgeScenarios = mockJudgeCases.map { testCase -> [String: Any] in
+            let newRequests = (testCase["judge"] as? [String: Any])?["newRequests"] as? [String] ?? []
+            return ["match": newRequests.joined(separator: "\n"), "answer": testCase["systemone"] ?? [:]]
+        } + flowScenarios.systemOne
+        let started = try await MockSystemOne.start(scenarios: judgeScenarios)
+        systemOneMock = started
+        _ = try await AgentClient.driver("POST", "/agent/systemone", body: [
+            "baseURL": "http://127.0.0.1:\(started.boundPort)/v1",
+            "model": "jev-mock",
+            "apiKey": "eval",
+        ])
+        if !mockJudgeCases.isEmpty {
+            print("\n== title judge (\(mockJudgeCases.count) cases, mock system one :\(started.boundPort)) ==")
+            results += await TitleEvals.runMockJudgeCases(mockJudgeCases, mock: started)
+        }
+        if !flowCases.isEmpty {
+            _ = try await AgentClient.driver("POST", "/settings", body: ["aiTabTitles": true])
+            print("\n== title flows (\(flowCases.count) flows, ~15s per step) ==")
+            results += await TitleEvals.runFlows(flowCases, systemOnePort: started.boundPort)
+        }
+        _ = try await AgentClient.driver("POST", "/agent/systemone/clear")
     }
 
     if !liveCases.isEmpty {
@@ -187,14 +228,31 @@ do {
         print("\n== live (\(liveCases.count) cases, \(args.provider)\(modelSuffix)) ==")
         results += await runCases(liveCases, agentPort: agentPort, token: token, args: args)
     }
+
+    if !liveJudgeCases.isEmpty {
+        let systemOne = try await AgentClient.driver("GET", "/agent/systemone")
+        guard systemOne["configured"] as? Bool == true else {
+            throw EvalError("live judge cases need a TypeSafe key in Settings → Agent → Decision Model")
+        }
+        print("\n== live title judge (\(liveJudgeCases.count) cases, \(systemOne["model"] ?? "?")) ==")
+        results += await TitleEvals.runLiveJudgeCases(liveJudgeCases)
+    }
 } catch {
+    abortReason = error.localizedDescription
     FileHandle.standardError.write(Data("eval aborted: \(error.localizedDescription)\n".utf8))
 }
 
-// Restore the user's provider state whatever happened above.
+// Restore the user's provider and settings state whatever happened above.
 mock?.stop()
 if mock != nil {
     _ = try? await AgentClient.driver("POST", "/agent/provider/remove", body: ["name": "PigeonEvalMock"])
+}
+systemOneMock?.stop()
+if systemOneMock != nil {
+    _ = try? await AgentClient.driver("POST", "/agent/systemone/clear")
+}
+if let enabled = savedSettings?["aiTabTitles"] as? Bool {
+    _ = try? await AgentClient.driver("POST", "/settings", body: ["aiTabTitles": enabled])
 }
 if let savedProvider {
     _ = try? await AgentClient.driver("POST", "/agent/default", body: [
@@ -203,11 +261,12 @@ if let savedProvider {
 }
 
 let failed = results.filter { !$0.failures.isEmpty }
-let securitySuffix = securityFailures.isEmpty ? "" : ", security preflight FAILED"
+let securitySuffix = (securityFailures.isEmpty ? "" : ", security preflight FAILED")
+    + (abortReason.map { ", ABORTED: \($0)" } ?? "")
 print("\n== summary: \(results.count - failed.count)/\(results.count) cases passed\(securitySuffix) ==")
 if args.verbose {
     for result in failed {
         print("\n--- \(result.name) output ---\n\(Checks.stripANSI(result.raw))\n---")
     }
 }
-exit(failed.isEmpty && securityFailures.isEmpty ? 0 : 1)
+exit(failed.isEmpty && securityFailures.isEmpty && abortReason == nil ? 0 : 1)

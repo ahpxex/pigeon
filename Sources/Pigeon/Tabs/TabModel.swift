@@ -12,9 +12,9 @@ final class TerminalTab: Identifiable, ObservableObject {
     @Published var customTitle: String?
 
     /// Model-generated summary of what's happening in this terminal
-    /// (TabTitleSummarizer): set once automatically when the terminal
-    /// gets busy (if enabled), or on demand from the tab's context
-    /// menu. A user rename still wins.
+    /// (TabTitleSummarizer): refreshed automatically as the user submits
+    /// prompts to a coding agent (if enabled), or on demand from the
+    /// tab's context menu. A user rename still wins.
     @Published var aiTitle: String?
 
     /// OpenMoji code shown in the sidebar; random at birth, user-pickable.

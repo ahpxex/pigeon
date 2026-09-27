@@ -14,10 +14,15 @@ import Foundation
 ///   so the tab follows what the user is currently asking for.
 ///   Terminal output never participates in deciding whether an agent
 ///   is running, and nothing fires between submissions.
+///   When the tab already has an AI title and a decision model is
+///   configured (SystemOneSettings), TitleChangeJudge first decides
+///   whether the new prompts changed the task; a confident "same task"
+///   keeps the title without calling the title model at all.
 /// - **On demand**: the tab's context-menu "Summarize Title" (also the
-///   driver's /tabs/summarize), any number of times.
+///   driver's /tabs/summarize), any number of times, never gated.
 ///
-/// Uses the provider/model configured for the built-in agent.
+/// Uses the agent's provider with its title model
+/// (`AgentProvider.effectiveTitleModel`).
 @MainActor
 final class TabTitleSummarizer {
     static let shared = TabTitleSummarizer()
@@ -44,6 +49,20 @@ final class TabTitleSummarizer {
         var summarizedSubmitCount = 0
         var lastRequestAt: Date = .distantPast
         var inFlight = false
+        /// Observability for the driver's /titles/state: how often each
+        /// model was actually called, and the latest judge decision.
+        var titleRequests = 0
+        var judgeRequests = 0
+        var lastDecision: TitleChangeJudge.Decision?
+    }
+
+    /// Everything TitleChangeJudge needs, captured when the auto trigger
+    /// fires.
+    private struct JudgeInput {
+        var config: SystemOneSettings.Config
+        var currentTitle: String
+        var earlierRequests: [String]
+        var newRequests: [String]
     }
 
     private var states: [UUID: TabState] = [:]
@@ -71,7 +90,22 @@ final class TabTitleSummarizer {
         // A manual summary also covers the pending submission, if any.
         state.summarizedSubmitCount =
             TabActivityMonitor.shared.activity(for: tab.id)?.submitCount ?? 0
-        request(tab, content: content, state: state)
+        // The user explicitly asked: never gated.
+        request(tab, content: content, state: state, judge: nil)
+    }
+
+    /// Driver /titles/state: per-tab bookkeeping for tests.
+    func debugState(for tab: TerminalTab) -> [String: Any] {
+        let state = states[tab.id] ?? TabState()
+        return [
+            "aiTitle": tab.aiTitle as Any,
+            "summarizedSubmitCount": state.summarizedSubmitCount,
+            "submitCount": TabActivityMonitor.shared.activity(for: tab.id)?.submitCount ?? 0,
+            "inFlight": state.inFlight,
+            "titleRequests": state.titleRequests,
+            "judgeRequests": state.judgeRequests,
+            "lastDecision": state.lastDecision?.json as Any,
+        ]
     }
 
     /// What the user asked for, supplied directly by busy hooks.
@@ -79,7 +113,32 @@ final class TabTitleSummarizer {
         guard let submits = TabActivityMonitor.shared.activity(for: tab.id)?.recentSubmits,
               !submits.isEmpty
         else { return nil }
-        return submits.joined(separator: "\n---\n")
+        return submits.map(\.prompt).joined(separator: "\n---\n")
+    }
+
+    /// Judge input for an automatic re-title, or nil when there is
+    /// nothing to judge: no decision model configured, no AI title yet
+    /// (the first title always comes from the title model), or the
+    /// latest submission carried no prompt (a hook source that doesn't
+    /// report one) — then the title model runs as it would without a
+    /// judge.
+    private static func judgeInput(
+        for tab: TerminalTab,
+        activity: TabActivityMonitor.Activity,
+        summarizedThrough: Int
+    ) -> JudgeInput? {
+        guard let config = SystemOneSettings.shared.activeConfig,
+              let currentTitle = tab.aiTitle,
+              let latest = activity.recentSubmits.last,
+              latest.number == activity.submitCount
+        else { return nil }
+        let earlier = activity.recentSubmits.filter { $0.number <= summarizedThrough }
+        let new = activity.recentSubmits.filter { $0.number > summarizedThrough }
+        return JudgeInput(
+            config: config,
+            currentTitle: currentTitle,
+            earlierRequests: earlier.map(\.prompt),
+            newRequests: new.map(\.prompt))
     }
 
     private func tick() {
@@ -101,15 +160,20 @@ final class TabTitleSummarizer {
             else { continue }
             let content = Self.screenTail(of: tab)
             guard !content.isEmpty else { continue }
+            let judge = Self.judgeInput(
+                for: tab, activity: activity,
+                summarizedThrough: state.summarizedSubmitCount)
             state.summarizedSubmitCount = activity.submitCount
-            request(tab, content: content, state: state)
+            request(tab, content: content, state: state, judge: judge)
         }
     }
 
-    private func request(_ tab: TerminalTab, content: String, state: TabState) {
+    private func request(
+        _ tab: TerminalTab, content: String, state: TabState, judge: JudgeInput?
+    ) {
         let agent = AgentSettings.shared
         guard let provider = agent.providers.first(where: { $0.id == agent.defaultProviderID }),
-              !provider.selectedModel.isEmpty
+              !provider.effectiveTitleModel.isEmpty
         else { return }
         let key = agent.apiKey(for: provider)
         guard !key.isEmpty else { return }
@@ -122,31 +186,50 @@ final class TabTitleSummarizer {
         let previousTitle = tab.aiTitle
         let submits = Self.submitContext(of: tab)
         Task { [weak self, weak tab] in
+            if let judge {
+                self?.update(tab) { $0.judgeRequests += 1 }
+                let decision = await TitleChangeJudge.judge(
+                    config: judge.config,
+                    currentTitle: judge.currentTitle,
+                    earlierRequests: judge.earlierRequests,
+                    newRequests: judge.newRequests)
+                self?.update(tab) { $0.lastDecision = decision }
+                if decision.verdict == .keep {
+                    self?.update(tab) { $0.inFlight = false }
+                    return
+                }
+            }
+
+            self?.update(tab) { $0.titleRequests += 1 }
             let title = await Self.requestTitle(
                 provider: provider, apiKey: key,
                 content: content, submits: submits, previousTitle: previousTitle)
-            await MainActor.run {
-                guard let self else { return }
-                guard let tab else { return }
-                var state = self.states[tab.id] ?? TabState()
-                state.inFlight = false
-                self.states[tab.id] = state
-                if let title, tab.customTitle == nil {
-                    tab.aiTitle = title
-                }
+            guard let self, let tab else { return }
+            self.update(tab) { $0.inFlight = false }
+            if let title, tab.customTitle == nil {
+                tab.aiTitle = title
             }
         }
     }
 
-    /// The tail of the visible screen: what the model summarizes.
+    private func update(_ tab: TerminalTab?, _ change: (inout TabState) -> Void) {
+        guard let tab else { return }
+        var state = states[tab.id] ?? TabState()
+        change(&state)
+        states[tab.id] = state
+    }
+
+    /// The tail of the visible screen: supporting context for the title.
+    /// The hook-reported prompts are the primary signal, so a short tail
+    /// is enough — and every line is paid for on each title request.
     private static func screenTail(of tab: TerminalTab) -> String {
         var lines = tab.surfaceView.screenText()
             .components(separatedBy: "\n")
             .map { $0.replacingOccurrences(of: "\\s+$", with: "", options: .regularExpression) }
         while lines.last?.isEmpty == true { lines.removeLast() }
-        lines = lines.suffix(40)
+        lines = lines.suffix(20)
         var text = lines.joined(separator: "\n")
-        if text.count > 4_000 { text = String(text.suffix(4_000)) }
+        if text.count > 2_000 { text = String(text.suffix(2_000)) }
         return text
     }
 
@@ -194,7 +277,7 @@ final class TabTitleSummarizer {
         for await event in ChatStreamClient.stream(.init(
             baseURL: provider.baseURL,
             apiKey: apiKey,
-            model: provider.selectedModel,
+            model: provider.effectiveTitleModel,
             messages: [.system(system), .user(user)],
             tools: []
         )) {
