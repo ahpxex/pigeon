@@ -2,7 +2,7 @@
 # Build GhosttyKit.xcframework (libghostty) from vendor/ghostty.
 #
 # Prerequisites:
-#   - zig 0.14.x:            brew install zig@0.14
+#   - zig 0.17.x:            brew install zig
 #   - Metal toolchain:       xcodebuild -downloadComponent MetalToolchain
 #   - Ghostty source:        scripts/setup.sh (clone + deps)
 #
@@ -12,7 +12,7 @@
 set -e
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-ZIG=/opt/homebrew/opt/zig@0.14/bin/zig
+ZIG=/opt/homebrew/opt/zig/bin/zig
 export ZIG_GLOBAL_CACHE_DIR="$ROOT/vendor/zig-cache"
 
 TARGET="${1:-native}"

@@ -22,7 +22,7 @@ packages:
     exactVersion: 0.4.0
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle
-    from: 2.9.6
+    from: 2.10.1
 
 targets:
   Pigeon:

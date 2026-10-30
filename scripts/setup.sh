@@ -14,8 +14,9 @@ if [ "${PIGEON_USE_PROXY:-0}" = "1" ]; then
 fi
 
 # Toolchain checks
-if [ ! -x /opt/homebrew/opt/zig@0.14/bin/zig ]; then
-  echo "zig 0.14 missing: brew install zig@0.14" >&2
+ZIG=/opt/homebrew/opt/zig/bin/zig
+if [ ! -x "$ZIG" ] || [ "$("$ZIG" version | cut -d. -f1-2)" != "0.17" ]; then
+  echo "zig 0.17.x missing: brew install zig (ghostty v1.4.0 requires 0.17)" >&2
   exit 1
 fi
 if ! command -v xcodegen >/dev/null; then
@@ -28,7 +29,7 @@ if ! xcrun -sdk macosx -f metal >/dev/null 2>&1; then
 fi
 
 # Ghostty source, pinned to the release Pigeon builds against.
-GHOSTTY_TAG=v1.2.3
+GHOSTTY_TAG=v1.4.0
 if [ ! -d "$ROOT/vendor/ghostty" ]; then
   git clone --depth 1 --branch "$GHOSTTY_TAG" \
     https://github.com/ghostty-org/ghostty.git "$ROOT/vendor/ghostty"

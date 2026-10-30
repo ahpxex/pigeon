@@ -594,7 +594,7 @@ extension Ghostty {
             }
 
             let key = event.ghosttyKeyEvent(GHOSTTY_ACTION_PRESS)
-            guard ghostty_surface_key_is_binding(surface, key) else { return false }
+            guard ghostty_surface_key_is_binding(surface, key, nil) else { return false }
             _ = ghostty_surface_key(surface, key)
             return true
         }

@@ -52,16 +52,16 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "build=${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
 
-      - name: Install zig 0.14 (Ghostty v1.2.3 toolchain)
+      - name: Install zig 0.17 (Ghostty v1.4.0 toolchain)
         run: |
-          brew install zig@0.14 xcodegen
-          echo "/opt/homebrew/opt/zig@0.14/bin" >> "$GITHUB_PATH"
+          brew install zig xcodegen
+          echo "/opt/homebrew/opt/zig/bin" >> "$GITHUB_PATH"
 
       - name: Build libghostty + deps, generate project
         run: |
           # vendor/ is gitignored: clone ghostty at the pinned tag,
           # apply patches, fetch deps, build the xcframework.
-          GHOSTTY_TAG=v1.2.3
+          GHOSTTY_TAG=v1.4.0
           git clone --depth 1 --branch "$GHOSTTY_TAG" \
             https://github.com/ghostty-org/ghostty.git vendor/ghostty
           for patch in patches/*.patch; do

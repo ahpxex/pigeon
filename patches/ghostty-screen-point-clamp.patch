@@ -1,8 +1,8 @@
 diff --git a/src/apprt/embedded.zig b/src/apprt/embedded.zig
-index 08d8291..b8b9ebc 100644
+index 697f0a7..9f1919e 100644
 --- a/src/apprt/embedded.zig
 +++ b/src/apprt/embedded.zig
-@@ -1259,9 +1259,17 @@ pub const CAPI = struct {
+@@ -1642,9 +1642,17 @@ pub const CAPI = struct {
                  ),
              };
  
