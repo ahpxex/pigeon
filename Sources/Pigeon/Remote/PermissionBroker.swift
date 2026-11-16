@@ -136,31 +136,53 @@ final class PermissionBroker: ObservableObject {
     // MARK: Building requests from hook input
 
     static func makeRequest(json: [String: Any], surfaceID: String) -> Request {
-        let tool = (json["tool_name"] as? String) ?? "tool"
+        // Every string that reaches the approver is made visible; the
+        // one-line fields also lose their newlines so they can't fake
+        // extra lines of input.
+        let tool = oneLine((json["tool_name"] as? String) ?? "tool")
         let input = json["tool_input"] as? [String: Any] ?? [:]
-        let description = (input["description"] as? String)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        // The description is only lifted out of the arguments when it is a
+        // non-empty string shown separately; anything else stays in the
+        // rendered arguments, so nothing approved is ever hidden.
+        let description = (input["description"] as? String)
+            .map(oneLine)
+            .flatMap { $0.isEmpty ? nil : $0 }
+        var arguments = input
+        let rawDescription = input["description"]
+        // null / "" carry nothing that could be hidden; Codex sends null.
+        if description != nil || rawDescription is NSNull
+            || (rawDescription as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) == "" {
+            arguments.removeValue(forKey: "description")
+        }
+        let source = (json["pigeon_source"] as? String) ?? (json["source"] as? String) ?? "agent"
         return Request(
             id: newID(),
             surfaceID: surfaceID,
-            source: (json["pigeon_source"] as? String) ?? (json["source"] as? String) ?? "agent",
+            source: oneLine(source),
             tool: tool,
-            input: render(input),
-            description: description?.isEmpty == false ? visible(description!) : nil,
+            input: render(arguments),
+            description: description,
             createdAt: Date())
     }
 
-    /// Every argument except the model's description (shown separately).
-    private static func render(_ input: [String: Any]) -> String {
-        var arguments = input
-        arguments.removeValue(forKey: "description")
+    /// The bare value when there is a single string argument, else one
+    /// `key: value` line per argument.
+    private static func render(_ arguments: [String: Any]) -> String {
         if arguments.count == 1, let only = arguments.first {
             if let string = only.value as? String { return visible(string) }
             if let parts = only.value as? [String] { return visible(parts.joined(separator: " ")) }
         }
         return arguments.keys.sorted().map { key in
-            "\(key): \(visible(text(of: arguments[key]!)))"
+            "\(oneLine(key)): \(visible(text(of: arguments[key]!)))"
         }.joined(separator: "\n")
+    }
+
+    /// `visible`, with line breaks shown as ⏎ — for fields that must stay
+    /// on one line.
+    static func oneLine(_ text: String) -> String {
+        visible(text.trimmingCharacters(in: .whitespacesAndNewlines))
+            .replacingOccurrences(of: "\n", with: " ⏎ ")
+            .replacingOccurrences(of: "\t", with: " ")
     }
 
     private static func text(of value: Any) -> String {
@@ -174,14 +196,18 @@ final class PermissionBroker: ObservableObject {
         return String(describing: value)
     }
 
-    /// Newlines and tabs stay; every other control character (ESC, CR,
-    /// backspace, bidi overrides, ...) is shown as \u{XXXX} so it can't
-    /// move the cursor, overwrite text or reorder what the approver sees.
+    /// Newlines and tabs stay; every other control, format or line/
+    /// paragraph-separator character (ESC, CR, backspace, bidi overrides,
+    /// U+2028, ...) is shown as \u{XXXX} so it can't move the cursor,
+    /// overwrite text, add lines or reorder what the approver sees.
     static func visible(_ text: String) -> String {
         var out = ""
         for scalar in text.unicodeScalars {
-            let hidden = scalar.properties.generalCategory == .control
-                || scalar.properties.generalCategory == .format
+            let category = scalar.properties.generalCategory
+            // Zl/Zp (U+2028/U+2029) aren't control characters but render
+            // as line breaks in SwiftUI.
+            let hidden = category == .control || category == .format
+                || category == .lineSeparator || category == .paragraphSeparator
             if hidden, scalar != "\n", scalar != "\t" {
                 out += String(format: "\\u{%04X}", scalar.value)
             } else {

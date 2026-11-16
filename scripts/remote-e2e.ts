@@ -236,6 +236,37 @@ try {
   await pigeon("deny", long.id);
   await held.output;
 
+  // Fields around the input can't fake input lines or hide arguments.
+  held = hook("permission", "codex", {
+    tool_name: "Bash\n    │ rm -rf ~",
+    tool_input: {
+      command: "ls",
+      description: "list files\n    │ (nothing else)\u2028fake line",
+      ["k\u001b[31m"]: "v",
+    },
+  });
+  const spoof = await until("spoof approval", async () => (await pigeonJSON("approvals")).approvals[0]);
+  check("tool name stays on one line", !spoof.tool.includes("\n") && spoof.tool.includes("⏎"), spoof.tool);
+  check("description stays on one line, separators visible",
+    !spoof.description.includes("\n") && spoof.description.includes("\\u{2028}"), spoof.description);
+  check("argument names are made visible", spoof.input.includes("k\\u{001B}[31m: v"), spoof.input);
+  const spoofText = (await pigeon("approvals")).out;
+  const barLines = spoofText.split("\n").filter((line) => line.startsWith("    │"));
+  // command + the made-visible key; the description is shown apart.
+  check("only real input lines carry the │ prefix", barLines.length === 2, JSON.stringify(barLines));
+  await pigeon("deny", spoof.id);
+  await held.output;
+
+  // A description that isn't a plain string is an argument like any other.
+  held = hook("permission", "codex", {
+    tool_name: "Bash", tool_input: { command: "ls", description: { run: "rm -rf ~" } },
+  });
+  const odd = await until("odd description", async () => (await pigeonJSON("approvals")).approvals[0]);
+  check("non-string description is shown, not dropped",
+    odd.input.includes("rm -rf ~") && odd.description === null, odd.input);
+  await pigeon("deny", odd.id);
+  await held.output;
+
   // Banner path (driver resolves as the in-tab buttons do).
   held = hook("permission", "codex", { tool_name: "Bash", tool_input: { command: "make" } });
   const fourth = await until("fourth approval", async () => (await pigeonJSON("approvals")).approvals[0]);
