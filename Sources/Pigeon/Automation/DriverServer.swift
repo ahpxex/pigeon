@@ -83,7 +83,14 @@ final class DriverServer {
             var buffer = buffer
             if let data { buffer.append(data) }
 
-            if let request = HTTPRequest(parsing: buffer) {
+            let parsed: HTTPRequest?
+            do {
+                parsed = try HTTPRequest(parsing: buffer)
+            } catch {
+                connection.cancel() // malformed: can never become valid
+                return
+            }
+            if let request = parsed {
                 self.handle(request) { response in
                     connection.send(
                         content: response.serialized,
@@ -103,19 +110,25 @@ final class DriverServer {
         let query: [String: String]
         let body: Data
 
-        init?(parsing data: Data) {
+        struct Malformed: Error {}
+
+        /// nil while incomplete; throws when the request can never be valid.
+        init?(parsing data: Data) throws {
             guard let headerEnd = data.range(of: Data("\r\n\r\n".utf8)) else { return nil }
             guard let head = String(data: data[..<headerEnd.lowerBound], encoding: .utf8)
-            else { return nil }
+            else { throw Malformed() }
             let lines = head.components(separatedBy: "\r\n")
             let parts = lines[0].components(separatedBy: " ")
-            guard parts.count >= 2 else { return nil }
+            guard parts.count >= 2 else { throw Malformed() }
 
             var contentLength = 0
             for line in lines.dropFirst() {
                 let kv = line.split(separator: ":", maxSplits: 1)
                 if kv.count == 2, kv[0].lowercased() == "content-length" {
-                    contentLength = Int(kv[1].trimmingCharacters(in: .whitespaces)) ?? 0
+                    guard let length = Int(kv[1].trimmingCharacters(in: .whitespaces)),
+                          (0...(1024 * 1024)).contains(length)
+                    else { throw Malformed() }
+                    contentLength = length
                 }
             }
             let bodyStart = headerEnd.upperBound

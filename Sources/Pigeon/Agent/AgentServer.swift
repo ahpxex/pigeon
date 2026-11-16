@@ -110,15 +110,23 @@ final class AgentServer {
             var buffer = buffer
             if let data { buffer.append(data) }
 
-            if let request = ParsedRequest(data: buffer) {
-                self.handle(request, connection: connection)
-            } else if complete || buffer.count > 512 * 1024 {
+            do {
+                if let request = try ParsedRequest(data: buffer) {
+                    self.handle(request, connection: connection)
+                } else if complete || buffer.count > Self.maxRequestBytes {
+                    connection.cancel()
+                } else {
+                    self.receive(connection, buffer: buffer)
+                }
+            } catch {
                 connection.cancel()
-            } else {
-                self.receive(connection, buffer: buffer)
             }
         }
     }
+
+    static let maxRequestBytes = 512 * 1024
+
+    struct MalformedRequest: Error {}
 
     struct ParsedRequest {
         var method: String
@@ -126,13 +134,16 @@ final class AgentServer {
         var headers: [String: String]
         var body: Data
 
-        init?(data: Data) {
-            guard let headerEnd = data.range(of: Data("\r\n\r\n".utf8)),
-                  let head = String(data: data[..<headerEnd.lowerBound], encoding: .utf8)
-            else { return nil }
+        /// nil while the request is still incomplete; throws when it can
+        /// never become valid. This runs before authentication, on bytes
+        /// any local process can send, so nothing here may trap.
+        init?(data: Data) throws {
+            guard let headerEnd = data.range(of: Data("\r\n\r\n".utf8)) else { return nil }
+            guard let head = String(data: data[..<headerEnd.lowerBound], encoding: .utf8)
+            else { throw MalformedRequest() }
             let lines = head.components(separatedBy: "\r\n")
             let parts = lines[0].components(separatedBy: " ")
-            guard parts.count >= 2 else { return nil }
+            guard parts.count >= 2 else { throw MalformedRequest() }
 
             var headers: [String: String] = [:]
             for line in lines.dropFirst() {
@@ -141,7 +152,9 @@ final class AgentServer {
                     headers[kv[0].lowercased()] = kv[1].trimmingCharacters(in: .whitespaces)
                 }
             }
-            let contentLength = Int(headers["content-length"] ?? "0") ?? 0
+            guard let contentLength = Int(headers["content-length"] ?? "0"),
+                  (0...AgentServer.maxRequestBytes).contains(contentLength)
+            else { throw MalformedRequest() }
             let bodyStart = headerEnd.upperBound
             guard data.count - bodyStart >= contentLength else { return nil }
 
