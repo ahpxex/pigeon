@@ -40,7 +40,7 @@ extension DriverServer {
                 "cli": remote.cliPath,
                 "lastError": remote.lastError as Any,
                 "pending": PermissionBroker.shared.pending.map {
-                    ["id": $0.id, "surface": $0.surfaceID, "tool": $0.tool, "summary": $0.summary]
+                    ["id": $0.id, "surface": $0.surfaceID, "tool": $0.tool, "input": $0.input]
                 },
                 "sessions": sessions,
                 "cursor": AgentSessions.shared.lastSeq,

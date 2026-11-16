@@ -28,15 +28,30 @@ struct ApprovalBanner: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                if !request.summary.isEmpty {
-                    Text(request.summary)
-                        .font(.system(size: 12, design: .monospaced))
-                        .lineLimit(5)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(8)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6).fill(.primary.opacity(0.06)))
+                if !request.input.isEmpty {
+                    // The whole input, scrollable — never truncated, since
+                    // it is exactly what Allow approves.
+                    ScrollView {
+                        Text(request.input)
+                            .font(.system(size: 12, design: .monospaced))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(8)
+                    }
+                    .frame(maxHeight: 180)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6).fill(.primary.opacity(0.06)))
+                    if isLong(request.input) {
+                        HStack(spacing: 5) {
+                            Image(systemName: "arrow.down.to.line")
+                                .foregroundStyle(.orange)
+                            Text("Long input (\(request.input.count) characters) — scroll to "
+                                + "read all of it before allowing.")
+                                .foregroundStyle(.primary)
+                        }
+                        .font(.system(size: 11, weight: .semibold))
+                    }
                 }
                 if let description = request.description {
                     Text(description)
@@ -73,6 +88,13 @@ struct ApprovalBanner: View {
             .transition(.move(edge: .top).combined(with: .opacity))
             .accessibilityIdentifier("approvalBanner")
         }
+    }
+
+    /// More than the scroll area shows at once (~8 lines of ~70 columns).
+    private func isLong(_ input: String) -> Bool {
+        let lines = input.split(separator: "\n", omittingEmptySubsequences: false)
+        let wrapped = lines.reduce(0) { $0 + max(1, ($1.count + 69) / 70) }
+        return wrapped > 8
     }
 
     private func agentName(_ source: String) -> String {

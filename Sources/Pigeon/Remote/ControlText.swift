@@ -197,8 +197,14 @@ enum ControlText {
         var out = "\nApproval \(request.id) — \(agentName(request.source))"
         if let tab { out += " in [\(shortID(tab))] \(displayPath(tab.surfaceView.pwd))" }
         out += ", waiting since \(time(request.createdAt))\n"
-        out += "  \(request.tool): \(request.summary)\n"
-        if let description = request.description { out += "  (\(description))\n" }
+        // The full input, never shortened: this is what gets approved.
+        out += "  \(request.tool) (\(request.input.count) characters, shown in full):\n"
+        for line in request.input.components(separatedBy: "\n") {
+            out += "    │ \(line)\n"
+        }
+        if let description = request.description {
+            out += "  the agent's description (not verified): \(description)\n"
+        }
         out += "  → `pigeon approve \(request.id)` or `pigeon deny \(request.id) [reason]`\n"
         return out
     }
@@ -209,7 +215,7 @@ enum ControlText {
             "session": tab(surfaceID: request.surfaceID).map(shortID) ?? NSNull(),
             "agent": request.source,
             "tool": request.tool,
-            "summary": request.summary,
+            "input": request.input,
             "description": request.description ?? NSNull(),
             "created_at": iso(request.createdAt),
         ]

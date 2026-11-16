@@ -26,15 +26,27 @@ final class PermissionBroker: ObservableObject {
         /// claude-code | codex
         let source: String
         let tool: String
-        /// The essential argument: the command, file path, URL, ...
-        let summary: String
+        /// Everything the tool would run with, untruncated: the bare
+        /// command/path when that is the only argument, else one
+        /// `key: value` line per argument. This is what gets approved, so
+        /// it is never shortened; control characters are made visible
+        /// (\u{1B} etc.) so nothing can hide or rewrite what is shown.
+        let input: String
         /// The model's own one-line description, when the host sent one.
         let description: String?
         let createdAt: Date
 
+        /// One line for notifications only — says so when it is cut.
         var summaryLine: String {
-            summary.isEmpty ? tool : "\(tool): \(summary)"
+            let flat = input.replacingOccurrences(of: "\n", with: " ⏎ ")
+            let head = flat.count > Self.summaryLimit
+                ? String(flat.prefix(Self.summaryLimit))
+                    + "… (\(input.count) characters in full: `pigeon approvals`)"
+                : flat
+            return head.isEmpty ? tool : "\(tool): \(head)"
         }
+
+        static let summaryLimit = 160
     }
 
     enum Decision: Equatable {
@@ -133,31 +145,50 @@ final class PermissionBroker: ObservableObject {
             surfaceID: surfaceID,
             source: (json["pigeon_source"] as? String) ?? (json["source"] as? String) ?? "agent",
             tool: tool,
-            summary: summarize(input),
-            description: description?.isEmpty == false ? description : nil,
+            input: render(input),
+            description: description?.isEmpty == false ? visible(description!) : nil,
             createdAt: Date())
     }
 
-    private static func summarize(_ input: [String: Any]) -> String {
-        for key in ["command", "cmd", "file_path", "path", "url", "pattern", "query"] {
-            if let string = input[key] as? String, !string.isEmpty {
-                return capped(string)
-            }
-            if let parts = input[key] as? [String], !parts.isEmpty {
-                return capped(parts.joined(separator: " "))
-            }
+    /// Every argument except the model's description (shown separately).
+    private static func render(_ input: [String: Any]) -> String {
+        var arguments = input
+        arguments.removeValue(forKey: "description")
+        if arguments.count == 1, let only = arguments.first {
+            if let string = only.value as? String { return visible(string) }
+            if let parts = only.value as? [String] { return visible(parts.joined(separator: " ")) }
         }
-        var rest = input
-        rest.removeValue(forKey: "description")
-        guard !rest.isEmpty,
-              let data = try? JSONSerialization.data(withJSONObject: rest, options: [.sortedKeys]),
-              let json = String(data: data, encoding: .utf8)
-        else { return "" }
-        return capped(json)
+        return arguments.keys.sorted().map { key in
+            "\(key): \(visible(text(of: arguments[key]!)))"
+        }.joined(separator: "\n")
     }
 
-    private static func capped(_ text: String) -> String {
-        text.count > 2_000 ? String(text.prefix(2_000)) + "…" : text
+    private static func text(of value: Any) -> String {
+        if let string = value as? String { return string }
+        if JSONSerialization.isValidJSONObject(value),
+           let data = try? JSONSerialization.data(
+               withJSONObject: value, options: [.prettyPrinted, .sortedKeys]),
+           let json = String(data: data, encoding: .utf8) {
+            return json
+        }
+        return String(describing: value)
+    }
+
+    /// Newlines and tabs stay; every other control character (ESC, CR,
+    /// backspace, bidi overrides, ...) is shown as \u{XXXX} so it can't
+    /// move the cursor, overwrite text or reorder what the approver sees.
+    static func visible(_ text: String) -> String {
+        var out = ""
+        for scalar in text.unicodeScalars {
+            let hidden = scalar.properties.generalCategory == .control
+                || scalar.properties.generalCategory == .format
+            if hidden, scalar != "\n", scalar != "\t" {
+                out += String(format: "\\u{%04X}", scalar.value)
+            } else {
+                out.unicodeScalars.append(scalar)
+            }
+        }
+        return out
     }
 
     /// Short, typeable id ("p" + 5 hex digits), unique among pending.
