@@ -166,7 +166,7 @@ print("== security preflight ==")
 let securityFailures = await AgentClient.securityPreflight(port: agentPort, token: token)
 for failure in securityFailures { print("  FAIL \(failure)") }
 if securityFailures.isEmpty {
-    print("  PASS /ask and /confirm reject unauthenticated, wrong-token, origin, host probes")
+    print("  PASS /ask, /confirm, /activity, /permission reject unauthenticated, wrong-token, origin, host probes")
 }
 
 var results: [CaseResult] = []

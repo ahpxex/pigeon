@@ -233,7 +233,8 @@ enum AgentClient {
         }
     }
 
-    /// The /ask and /confirm auth red lines, asserted on every run.
+    /// The agent server auth red lines (/ask, /confirm and the hook
+    /// endpoints), asserted on every run.
     static func securityPreflight(port: Int, token: String) async -> [String] {
         func probe(headers: [String], body: String, path: String = "/ask") -> String {
             var lines = ["POST \(path) HTTP/1.1"] + headers
@@ -251,6 +252,13 @@ enum AgentClient {
             ("dns-rebinding host", probe(headers: ["Host: pigeon.evil.example:80", auth], body: "ping")),
             ("unauthenticated /confirm", probe(
                 headers: [host], body: #"{"id":"x","allow":true}"#, path: "/confirm")),
+            ("unauthenticated /activity", probe(
+                headers: [host], body: #"{"event":"idle"}"#, path: "/activity")),
+            ("unauthenticated /permission", probe(
+                headers: [host], body: #"{"tool_name":"Bash"}"#, path: "/permission")),
+            ("browser origin /permission", probe(
+                headers: [host, auth, "Origin: https://evil.example"],
+                body: #"{"tool_name":"Bash"}"#, path: "/permission")),
         ]
         var failures: [String] = []
         for (name, request) in probes {
