@@ -53,7 +53,13 @@ extension Ghostty {
 
         override var acceptsFirstResponder: Bool { true }
 
-        init(app: ghostty_app_t) {
+        /// - Parameters:
+        ///   - workingDirectory: start the shell here instead of the
+        ///     default (home / inherited) directory.
+        ///   - initialInput: bytes written to the pty once the shell has
+        ///     started, as if typed (e.g. "claude\n" to launch an agent).
+        ///     The pty buffers it until the shell reads its first line.
+        init(app: ghostty_app_t, workingDirectory: String? = nil, initialInput: String? = nil) {
             super.init(frame: NSMakeRect(0, 0, 800, 600))
 
             var config = ghostty_surface_config_new()
@@ -76,7 +82,13 @@ extension Ghostty {
             let surface = Self.withEnvVars(env) { envPtr, count in
                 config.env_vars = envPtr
                 config.env_var_count = count
-                return ghostty_surface_new(app, &config)
+                return Self.withOptionalCString(workingDirectory) { cwd in
+                    config.working_directory = cwd
+                    return Self.withOptionalCString(initialInput) { input in
+                        config.initial_input = input
+                        return ghostty_surface_new(app, &config)
+                    }
+                }
             }
 
             guard let surface else {
@@ -100,6 +112,14 @@ extension Ghostty {
 
         required init?(coder: NSCoder) {
             fatalError("init(coder:) is not supported")
+        }
+
+        /// Run `body` with a C string valid for its duration (nil stays nil).
+        private static func withOptionalCString<R>(
+            _ string: String?, _ body: (UnsafePointer<CChar>?) -> R
+        ) -> R {
+            guard let string else { return body(nil) }
+            return string.withCString { body($0) }
         }
 
         /// Build a C `ghostty_env_var_s` array from Swift strings, valid
@@ -191,6 +211,16 @@ extension Ghostty {
             key.action = GHOSTTY_ACTION_RELEASE
             key.text = nil
             _ = ghostty_surface_key(surface, key)
+        }
+
+        /// Process group currently in the foreground of this surface's
+        /// pty (tcgetpgrp), or nil when unknown. At a shell prompt this is
+        /// the shell; while a TUI program runs, it is that program's group.
+        var foregroundProcessGroup: pid_t? {
+            guard let surface else { return nil }
+            let pid = ghostty_surface_foreground_pid(surface)
+            guard pid > 0, pid <= UInt64(Int32.max) else { return nil }
+            return pid_t(pid)
         }
 
         /// The visible viewport only, as plain text. Cheap enough to

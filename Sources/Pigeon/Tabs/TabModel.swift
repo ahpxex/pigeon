@@ -43,8 +43,9 @@ final class TerminalTab: Identifiable, ObservableObject {
     /// Scrollback search state (cmd+F), one per tab.
     @MainActor let search = TerminalSearchModel()
 
-    init?(app: ghostty_app_t) {
-        let view = Ghostty.SurfaceView(app: app)
+    init?(app: ghostty_app_t, workingDirectory: String? = nil, initialInput: String? = nil) {
+        let view = Ghostty.SurfaceView(
+            app: app, workingDirectory: workingDirectory, initialInput: initialInput)
         guard view.surface != nil else { return nil }
         self.surfaceView = view
     }
@@ -168,10 +169,13 @@ final class TabManager: ObservableObject {
         ungroupedTabs + groups.flatMap { group in tabs.filter { $0.groupID == group.id } }
     }
 
+    /// Open a tab and select it. `workingDirectory` / `initialInput` are
+    /// passed to the new surface (see Ghostty.SurfaceView.init).
     @discardableResult
-    func newTab() -> TerminalTab? {
+    func newTab(workingDirectory: String? = nil, initialInput: String? = nil) -> TerminalTab? {
         guard let app = Ghostty.App.shared.app,
-              let tab = TerminalTab(app: app)
+              let tab = TerminalTab(
+                  app: app, workingDirectory: workingDirectory, initialInput: initialInput)
         else { return nil }
         // A tab opened while a grouped tab is selected joins that group.
         tab.groupID = selectedTab?.groupID
