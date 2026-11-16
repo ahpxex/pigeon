@@ -17,7 +17,8 @@ enum ControlText {
 
         Acting
           pigeon send <id> <message>       Type a message into the agent and press Enter.
-          pigeon interrupt <id>            Press Esc: stop the agent's current turn.
+          pigeon interrupt <id>            Press Esc: stop the agent's current turn. (Claude Code
+                                           doesn't report it, so it may stay "working".)
           pigeon key <id> <key>            Press one key, for the agent's own menus and
                                            dialogs: \(ControlKeys.names)
           pigeon new <dir> <claude|codex|pi>   Open a tab in <dir> and start that agent.

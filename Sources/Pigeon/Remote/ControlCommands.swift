@@ -288,7 +288,14 @@ struct ControlContext {
         guard let tab = resolveTab() else { return tabError() }
         if let problem = typingProblem(tab) { return problem }
         ControlKeys.press("escape", on: tab.surfaceView)
-        return .ok("Pressed Esc in \(ControlText.shortID(tab)) (interrupts the current turn).\n")
+        var out = "Pressed Esc in \(ControlText.shortID(tab)) (interrupts the current turn).\n"
+        if store.sessions[tab.surfaceView.agentSurfaceID]?.source
+            == ActivityHooks.Source.claudeCode.rawValue {
+            // Claude Code fires no hook for a user interrupt.
+            out += "Claude Code doesn't report interrupts, so it may keep showing as working "
+                + "until its next message; check with `pigeon screen \(ControlText.shortID(tab))`.\n"
+        }
+        return .ok(out)
     }
 
     func key() -> Response {
