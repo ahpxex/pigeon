@@ -325,16 +325,14 @@ final class DriverServer {
             // Simulate a coding-agent activity hook (same code path the
             // agent server's /activity endpoint uses) without needing
             // the per-launch token.
+            // Accepts the same payload fields as /activity (reply,
+            // message, ended, ...) via HookReport.
             guard let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any],
                   let surface = json["surface"] as? String,
-                  let event = json["event"] as? String,
-                  ["busy", "idle", "ping"].contains(event)
+                  let report = HookReport(json: json)
             else { return HTTPResponse(status: 400, error: "need {surface, event}") }
-            guard TabActivityMonitor.shared.handleHookActivity(
-                surfaceID: surface, event: event,
-                prompt: json["prompt"] as? String,
-                source: json["source"] as? String
-            ) else { return HTTPResponse(status: 404, error: "surface not found") }
+            guard TabActivityMonitor.shared.handle(report, surfaceID: surface)
+            else { return HTTPResponse(status: 404, error: "surface not found") }
             return HTTPResponse(json: ["ok": true])
 
         case ("POST", "/tabs/move"):
@@ -710,6 +708,7 @@ final class DriverServer {
 
         default:
             if let response = handleTitlesRoute(request) { return response }
+            if let response = handleRemoteRoute(request) { return response }
             if let response = handleLinksRoute(request, manager: manager) { return response }
             return HTTPResponse(status: 404, error: "unknown endpoint \(request.method) \(request.path)")
         }

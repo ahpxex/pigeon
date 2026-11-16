@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppSettings.shared.applyAppearance()
         AgentServer.shared.start()
         ActivityHooks.upgradeInstalledHooks()
+        RemoteControl.shared.startIfEnabled()
         TabTitleSummarizer.shared.start()
         DriverServer.shared.startIfConfigured()
 

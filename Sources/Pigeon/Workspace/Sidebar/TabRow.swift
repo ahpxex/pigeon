@@ -13,6 +13,7 @@ struct TabRow: View {
     @EnvironmentObject private var tabManager: TabManager
     @ObservedObject private var tabState: TerminalTab
     @ObservedObject private var settings = AppSettings.shared
+    @ObservedObject private var approvals = PermissionBroker.shared
     @State private var hovering = false
     @State private var renaming = false
     @State private var draftTitle = ""
@@ -76,6 +77,16 @@ struct TabRow: View {
                     .truncationMode(.tail)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .help(surfaceView.pwd ?? surfaceView.title)
+            }
+
+            if !renaming,
+               !approvals.requests(for: surfaceView.agentSurfaceID).isEmpty {
+                // A coding agent here waits for a tool approval.
+                Image(systemName: "hand.raised.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.orange)
+                    .help("Waiting for your approval")
+                    .accessibilityLabel("awaiting approval")
             }
 
             if tabState.hasUnread && !tabState.isBusy && !renaming {

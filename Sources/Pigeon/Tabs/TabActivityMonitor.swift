@@ -72,6 +72,16 @@ final class TabActivityMonitor {
         prompt: String? = nil,
         source: String? = nil
     ) -> Bool {
+        handle(HookReport(event: event, source: source, prompt: prompt), surfaceID: surfaceID)
+    }
+
+    /// Apply one hook report: the spinner/unread/outline state here, the
+    /// conversation and waiting state in AgentSessions.
+    @discardableResult
+    func handle(_ report: HookReport, surfaceID: String) -> Bool {
+        let event = report.event
+        let prompt = event == "busy" ? report.prompt : nil
+        let source = report.source
         guard let pair = TabManager.all
             .flatMap({ manager in manager.tabs.map { (manager, $0) } })
             .first(where: { $0.1.surfaceView.agentSurfaceID == surfaceID })
@@ -109,6 +119,11 @@ final class TabActivityMonitor {
                 tab.hasUnread = true
             }
 
+        case "attention":
+            // Waiting on the user is not a busy/idle transition; only the
+            // session record cares (AgentSessions).
+            break
+
         default: // ping: a new idle session baseline
             // A new session also repairs stale state from a previous
             // process that died without delivering idle. Do not count
@@ -120,12 +135,17 @@ final class TabActivityMonitor {
         }
 
         activities[tab.id] = activity
+        AgentSessions.shared.record(
+            report, surfaceID: surfaceID,
+            foregroundGroup: tab.surfaceView.foregroundProcessGroup)
         return true
     }
 
     func remove(tabID: UUID, surfaceID: String) {
         activities.removeValue(forKey: tabID)
         AgentOutlineStore.remove(surfaceID: surfaceID)
+        PermissionBroker.shared.releaseAll(surfaceID: surfaceID)
+        AgentSessions.shared.remove(surfaceID: surfaceID)
     }
 
     /// The user is looking at this tab right now: it is selected in a

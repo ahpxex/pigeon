@@ -20,7 +20,10 @@ import Foundation
 ///   the reporter name, which is also how removal finds them.
 ///
 /// Events: `busy` lights the spinner, `idle` clears it (and flags
-/// unread), and `ping` establishes an idle baseline at session start.
+/// unread; carries the agent's final reply when the host provides one),
+/// `ping` establishes an idle baseline at session start, `attention`
+/// says the agent is waiting on the user, and `permission` hands a tool
+/// approval to Pigeon (PermissionBroker) and blocks for its decision.
 enum ActivityHooks {
     enum Source: String, CaseIterable {
         case pi
@@ -51,7 +54,6 @@ enum ActivityHooks {
     }
 
     static let reporterName = "pigeon-activity"
-    private static let reporterVersionMarker = "pigeon-activity-v3"
     /// Keep JSON hook commands byte-for-byte stable while upgrading the
     /// shared reporter. Codex trusts the command itself, so needlessly
     /// changing this marker would invalidate an already-approved hook.
@@ -82,55 +84,6 @@ enum ActivityHooks {
 
     // MARK: - Reporter script
 
-    private static let script = """
-        #!/bin/sh
-        # pigeon-activity-v3
-        # pigeon-activity — installed by Pigeon (Settings → Agent).
-        # Reports coding-agent run state to the Pigeon tab that launched
-        # the agent. Called as:
-        #   pigeon-activity <event> <source> [hook-input.json]
-        # UserPromptSubmit input is copied into the request so its prompt
-        # can drive message history. Outside Pigeon this silently no-ops.
-        [ -n "$PIGEON_AGENT_PORT" ] && [ -n "$PIGEON_AGENT_TOKEN" ] && [ -n "$PIGEON_SURFACE_ID" ] || exit 0
-
-        body=$(/usr/bin/mktemp -t pigeon-activity) || exit 0
-        if [ -n "${3:-}" ] && [ -f "$3" ]; then
-          /bin/cp "$3" "$body" || { /bin/rm -f "$body"; exit 0; }
-        else
-          /bin/rm -f "$body"
-          /usr/bin/plutil -create xml1 "$body" >/dev/null 2>&1 || exit 0
-        fi
-
-        if /usr/bin/plutil -type event "$body" >/dev/null 2>&1; then
-          /usr/bin/plutil -replace event -string "$1" "$body" >/dev/null 2>&1
-        else
-          /usr/bin/plutil -insert event -string "$1" "$body" >/dev/null 2>&1
-        fi
-        if /usr/bin/plutil -type source "$body" >/dev/null 2>&1; then
-          /usr/bin/plutil -replace source -string "$2" "$body" >/dev/null 2>&1
-        else
-          /usr/bin/plutil -insert source -string "$2" "$body" >/dev/null 2>&1
-        fi
-        /usr/bin/plutil -convert json "$body" >/dev/null 2>&1 || {
-          /bin/rm -f "$body"
-          exit 0
-        }
-
-        # Wait for Pigeon to accept the event before the hook exits. The
-        # previous fire-and-forget subprocess could be torn down by the
-        # host before curl connected, silently losing busy or idle.
-        /usr/bin/curl --noproxy '*' --silent --fail --output /dev/null \\
-          --connect-timeout 0.25 --max-time 2 \\
-          -X POST "http://127.0.0.1:$PIGEON_AGENT_PORT/activity" \\
-          -H "Authorization: Bearer $PIGEON_AGENT_TOKEN" \\
-          -H "X-Pigeon-Surface: $PIGEON_SURFACE_ID" \\
-          -H "Content-Type: application/json" \\
-          --data-binary @"$body" >/dev/null 2>&1
-        /bin/rm -f "$body"
-        # Activity reporting must never break the coding agent itself.
-        exit 0
-        """
-
     static var isReporterInstalled: Bool {
         guard FileManager.default.isExecutableFile(atPath: reporterURL.path),
               let installed = try? String(contentsOf: reporterURL, encoding: .utf8)
@@ -144,7 +97,7 @@ enum ActivityHooks {
         try FileManager.default.createDirectory(
             at: dir, withIntermediateDirectories: true,
             attributes: [.posixPermissions: 0o755])
-        let data = Data(script.utf8)
+        let data = Data(reporterScript.utf8)
         try data.write(to: reporterURL, options: .atomic)
         try FileManager.default.setAttributes(
             [.posixPermissions: 0o755], ofItemAtPath: reporterURL.path)
@@ -157,6 +110,52 @@ enum ActivityHooks {
 
     // MARK: - Per-source status
 
+    /// One entry in a JSON hook config (Claude Code settings.json, Codex
+    /// hooks.json).
+    private struct JSONHook {
+        let event: String
+        let action: String
+        /// Save stdin to a file and pass its path. Kept for the prompt
+        /// hooks so their commands stay byte-identical to what earlier
+        /// versions installed (Codex re-asks for trust when a command
+        /// changes); the v4 reporter reads stdin itself for every other
+        /// event.
+        var promptFile = false
+        /// Seconds the host waits for the command. nil = host default.
+        var timeout: Int?
+    }
+
+    /// The permission hook holds until someone decides in Pigeon; the
+    /// reporter's own request gives up just before this.
+    private static let permissionHookTimeout = 3600
+
+    private static func jsonHooks(for source: Source) -> [JSONHook] {
+        var hooks = [
+            JSONHook(event: "SessionStart", action: "ping"),
+            JSONHook(event: "UserPromptSubmit", action: "busy", promptFile: true),
+            JSONHook(event: "Stop", action: "idle"),
+            JSONHook(event: "StopFailure", action: "idle"),
+            // idle, not a new event: older Pigeon builds share these hooks
+            // and only know busy/idle/ping. The SessionEnd hook name in the
+            // forwarded input tells current Pigeon the session is over.
+            JSONHook(event: "SessionEnd", action: "idle"),
+            JSONHook(
+                event: "PermissionRequest", action: "permission",
+                timeout: permissionHookTimeout),
+        ]
+        switch source {
+        case .claudeCode:
+            hooks.append(JSONHook(event: "Notification", action: "attention"))
+        case .codex:
+            // Esc interrupts a Codex turn without a Stop event. Codex caps
+            // Interrupt hooks at 3 s (default 1 s).
+            hooks.append(JSONHook(event: "Interrupt", action: "idle", timeout: 3))
+        case .pi:
+            return []
+        }
+        return hooks
+    }
+
     static func isInstalled(_ source: Source) -> Bool {
         guard isReporterInstalled else { return false }
         switch source {
@@ -166,15 +165,11 @@ enum ActivityHooks {
             return installed.contains(reporterVersionMarker)
         case .claudeCode:
             return jsonHookEventsContainReporter(
-                at: claudeSettingsURL,
-                events: ["SessionStart", "UserPromptSubmit", "Stop", "StopFailure", "SessionEnd"],
+                at: claudeSettingsURL, events: jsonHooks(for: source).map(\.event),
                 requireCurrentVersion: true)
         case .codex:
             return jsonHookEventsContainReporter(
-                at: codexHooksURL,
-                events: [
-                    "SessionStart", "UserPromptSubmit", "Stop", "StopFailure", "SessionEnd",
-                ],
+                at: codexHooksURL, events: jsonHooks(for: source).map(\.event),
                 requireCurrentVersion: true)
         }
     }
@@ -213,22 +208,10 @@ enum ActivityHooks {
         case .pi:
             try installPiExtension()
         case .claudeCode:
-            try mergeJSONHooks(at: claudeSettingsURL, source: source, events: [
-                "SessionStart": "ping",
-                "UserPromptSubmit": "busy",
-                "Stop": "idle",
-                "StopFailure": "idle",
-                "SessionEnd": "idle",
-            ], promptEvents: ["UserPromptSubmit"])
+            try mergeJSONHooks(at: claudeSettingsURL, source: source)
         case .codex:
             try ensureCodexHooksEnabled()
-            try mergeJSONHooks(at: codexHooksURL, source: source, events: [
-                "SessionStart": "ping",
-                "UserPromptSubmit": "busy",
-                "Stop": "idle",
-                "StopFailure": "idle",
-                "SessionEnd": "idle",
-            ], promptEvents: ["UserPromptSubmit"])
+            try mergeJSONHooks(at: codexHooksURL, source: source)
         }
     }
 
@@ -237,13 +220,11 @@ enum ActivityHooks {
         case .pi:
             try? FileManager.default.removeItem(at: piExtensionURL)
         case .claudeCode:
-            try removeJSONHooks(at: claudeSettingsURL, events: [
-                "SessionStart", "UserPromptSubmit", "Stop", "StopFailure", "SessionEnd",
-            ])
+            try removeJSONHooks(
+                at: claudeSettingsURL, events: jsonHooks(for: source).map(\.event))
         case .codex:
-            try removeJSONHooks(at: codexHooksURL, events: [
-                "SessionStart", "UserPromptSubmit", "Stop", "StopFailure", "SessionEnd",
-            ])
+            try removeJSONHooks(
+                at: codexHooksURL, events: jsonHooks(for: source).map(\.event))
         }
         // The reporter only matters while some agent still points at it.
         if !Source.allCases.contains(where: isInstalled) {
@@ -257,36 +238,34 @@ enum ActivityHooks {
     /// Ours are appended per event; entries mentioning the reporter name
     /// (ours or stale copies from another variant) are replaced; anything
     /// else in the file is preserved untouched.
-    private static func mergeJSONHooks(
-        at url: URL, source: Source, events: [String: String],
-        promptEvents: Set<String> = []
-    ) throws {
+    private static func mergeJSONHooks(at url: URL, source: Source) throws {
         var root = (try? Data(contentsOf: url))
             .flatMap { try? JSONSerialization.jsonObject(with: $0) }
             as? [String: Any] ?? [:]
         var hooks = root["hooks"] as? [String: Any] ?? [:]
 
-        for (event, action) in events {
-            var groups = hooks[event] as? [[String: Any]] ?? []
+        for hook in jsonHooks(for: source) {
+            var groups = hooks[hook.event] as? [[String: Any]] ?? []
             groups.removeAll { mentionsReporter($0) }
-            var command = "$HOME/.config/pigeon/hooks/\(reporterName) \(action) \(source.rawValue)"
-            if promptEvents.contains(event) {
+            var command =
+                "$HOME/.config/pigeon/hooks/\(reporterName) \(hook.action) \(source.rawValue)"
+            if hook.promptFile {
                 // Both hosts deliver event JSON on stdin. Preserve it in a
                 // temporary file so prompt text is never interpolated into
                 // shell or JSON syntax.
                 command = "f=$(mktemp); cat > \"$f\"; \(command) \"$f\"; rm -f \"$f\""
             }
             command += " # \(jsonHookVersionMarker)"
-            groups.append([
-                "hooks": [[
-                    "type": "command",
-                    // Both hosts run command hooks through a shell, so
-                    // $HOME expands; the path must not depend on which
-                    // app variant did the installing.
-                    "command": command,
-                ]],
-            ])
-            hooks[event] = groups
+            var entry: [String: Any] = [
+                "type": "command",
+                // Both hosts run command hooks through a shell, so $HOME
+                // expands; the path must not depend on which app variant
+                // did the installing.
+                "command": command,
+            ]
+            if let timeout = hook.timeout { entry["timeout"] = timeout }
+            groups.append(["hooks": [entry]])
+            hooks[hook.event] = groups
         }
 
         root["hooks"] = hooks
@@ -396,56 +375,12 @@ enum ActivityHooks {
 
     // MARK: - pi extension
 
-    private static let piExtension = #"""
-        import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-
-        // pigeon-activity-v3
-        // pigeon-activity — installed by Pigeon (Settings → Agent).
-        // Reports pi's run state to the Pigeon tab that launched it, so
-        // the sidebar spinner reflects real activity, and forwards the
-        // user's prompt for the message outline. No-op outside Pigeon
-        // (no PIGEON_* environment).
-        export default function (pi: ExtensionAPI) {
-          const port = process.env.PIGEON_AGENT_PORT;
-          const token = process.env.PIGEON_AGENT_TOKEN;
-          const surface = process.env.PIGEON_SURFACE_ID;
-          if (!port || !token || !surface) return;
-
-          const report = async (event: string, prompt?: string) => {
-            try {
-              const response = await fetch(`http://127.0.0.1:${port}/activity`, {
-                method: "POST",
-                headers: {
-                  Authorization: `Bearer ${token}`,
-                  "X-Pigeon-Surface": surface,
-                  "Content-Type": "application/json",
-                },
-                body: JSON.stringify({ event, source: "pi", prompt }),
-                signal: AbortSignal.timeout(2000),
-              });
-              if (!response.ok) throw new Error(`Pigeon returned ${response.status}`);
-            } catch {
-              // Pigeon may have exited; reporting must not break pi.
-            }
-          };
-
-          // Returning the promise makes pi await delivery before it moves
-          // to the next lifecycle event.
-          pi.on("session_start", () => report("ping"));
-          // agent_settled (not agent_end): pi may auto-retry or compact
-          // and continue — settled is the "really done" signal.
-          pi.on("before_agent_start", (event) => report("busy", event.prompt));
-          pi.on("agent_settled", () => report("idle"));
-          pi.on("session_shutdown", () => report("idle"));
-        }
-        """#
-
     private static func installPiExtension() throws {
         let dir = piExtensionURL.deletingLastPathComponent()
         try FileManager.default.createDirectory(
             at: dir, withIntermediateDirectories: true,
             attributes: [.posixPermissions: 0o755])
-        try piExtension.write(
+        try piExtensionSource.write(
             to: piExtensionURL, atomically: true, encoding: .utf8)
     }
 }

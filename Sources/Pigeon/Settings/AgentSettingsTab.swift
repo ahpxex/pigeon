@@ -33,6 +33,8 @@ struct AgentSettingsTab: View {
             DecisionModelSection()
 
             ActivityHooksSection()
+
+            RemoteControlSection()
         }
         .formStyle(.grouped)
     }

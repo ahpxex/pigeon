@@ -19,12 +19,8 @@ import Security
 ///       and the agent waits (120 s, then auto-deny) for:
 ///   POST /confirm   (same auth rules)
 ///     Body: {"id": "...", "allow": true|false}
-///   POST /activity   (same auth rules)
-///     Headers: X-Pigeon-Surface: <surface id>
-///     Body: {"event": "busy"|"idle"|"ping", "source": "pi"|"claude-code"|"codex"}
-///     Reporting hook for coding agents (see ActivityHooks): busy/idle
-///     drive the tab spinner authoritatively, ping marks the surface as
-///     hook-driven. Returns an empty 200 immediately.
+///   POST /activity, POST /permission   (same auth rules)
+///     Coding-agent hooks (see ActivityHooks, AgentServer+Hooks).
 ///
 /// The bind is 127.0.0.1-only, but that alone is not a trust boundary:
 /// any local process — including a browser tab via a simple POST, or a
@@ -124,7 +120,7 @@ final class AgentServer {
         }
     }
 
-    private struct ParsedRequest {
+    struct ParsedRequest {
         var method: String
         var path: String
         var headers: [String: String]
@@ -176,27 +172,7 @@ final class AgentServer {
             send(connection, raw: "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
             return
         }
-        if request.method == "POST", request.path == "/activity" {
-            guard let json = try? JSONSerialization.jsonObject(with: request.body) as? [String: Any],
-                  let event = json["event"] as? String,
-                  ["busy", "idle", "ping"].contains(event),
-                  let surfaceID = request.headers["x-pigeon-surface"], !surfaceID.isEmpty
-            else {
-                send(connection, raw: "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
-                return
-            }
-            let prompt = (json["prompt"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let source = json["source"] as? String
-            Task { @MainActor in
-                let accepted = TabActivityMonitor.shared.handleHookActivity(
-                    surfaceID: surfaceID, event: event,
-                    prompt: (event == "busy" && !(prompt ?? "").isEmpty) ? prompt : nil,
-                    source: source)
-                let status = accepted ? "200 OK" : "404 Not Found"
-                self.send(
-                    connection,
-                    raw: "HTTP/1.1 \(status)\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
-            }
+        if request.method == "POST", handleHookRequest(request, connection: connection) {
             return
         }
         guard request.method == "POST", request.path == "/ask" else {
@@ -391,7 +367,7 @@ final class AgentServer {
 
     // MARK: Low-level send helpers
 
-    private func send(_ connection: NWConnection, raw: String) {
+    func send(_ connection: NWConnection, raw: String) {
         connection.send(content: Data(raw.utf8), completion: .contentProcessed { _ in })
     }
 
