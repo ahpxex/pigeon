@@ -255,6 +255,18 @@ try {
   check("SessionEnd ends the session", !(await pigeonJSON("sessions")).sessions
     .some((s: any) => s.id === shortID));
 
+  // A hook fired while the shell itself is in front (a headless agent
+  // run in the background) must not make the shell typeable.
+  await hook("ping", "claude-code", { hook_event_name: "SessionStart" }).output;
+  mine = (await pigeonJSON("sessions")).sessions.find((s: any) => s.id === shortID);
+  check("hook with the shell in front: session listed but not messageable",
+    mine?.state === "idle" && mine?.can_send === false, JSON.stringify(mine));
+  const shellRefused = await pigeon("send", shortID, "echo SHOULD-NOT-RUN-2");
+  check("send refused when the shell is in front", shellRefused.code === 1, shellRefused.out);
+  check("key refused when the shell is in front", (await pigeon("key", shortID, "enter")).code === 1);
+  check("shell never received it", !(await screen()).includes("SHOULD-NOT-RUN-2"));
+  await hook("idle", "claude-code", { hook_event_name: "SessionEnd" }).output;
+
   // `new` validates its input before opening anything.
   check("new rejects unknown agents", (await pigeon("new", tmpdir(), "bash")).code === 1);
   check("new rejects missing directories", (await pigeon("new", "/no/such/dir", "pi")).code === 1);

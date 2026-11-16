@@ -87,7 +87,15 @@ final class AgentSessions {
         let isNew = sessions[surfaceID] == nil || !session.active
         if let source = report.source { session.source = source }
         session.lastEventAt = now
-        if !report.ended { session.agentProcessGroup = foregroundGroup }
+        if !report.ended {
+            // Hooks normally fire while the agent owns the terminal, but a
+            // headless run (`claude -p … &`) reports with the shell in
+            // front. Only a program the shell started counts as the agent;
+            // otherwise nothing may be typed into this tab.
+            session.agentProcessGroup = foregroundGroup.flatMap {
+                ProcessAncestry.isShellJob(foregroundGroup: $0, app: getpid()) ? $0 : nil
+            }
+        }
 
         switch report.event {
         case "ping":

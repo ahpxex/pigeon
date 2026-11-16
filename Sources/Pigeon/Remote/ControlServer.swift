@@ -167,7 +167,11 @@ final class ControlServer {
         var data = Data()
         var buffer = [UInt8](repeating: 0, count: 64 * 1024)
         while data.count <= Self.maxRequestBytes {
-            if let request = parse(data) { return request }
+            switch parse(data) {
+            case .complete(let request): return request
+            case .invalid: return nil
+            case .incomplete: break
+            }
             let count = read(fd, &buffer, buffer.count)
             guard count > 0 else { return nil }
             data.append(buffer, count: count)
@@ -175,25 +179,34 @@ final class ControlServer {
         return nil
     }
 
-    private static func parse(_ data: Data) -> Request? {
-        guard let headerEnd = data.range(of: Data("\r\n\r\n".utf8)),
-              let head = String(data: data[..<headerEnd.lowerBound], encoding: .utf8)
-        else { return nil }
+    private enum Parse {
+        case incomplete
+        case invalid
+        case complete(Request)
+    }
+
+    private static func parse(_ data: Data) -> Parse {
+        guard let headerEnd = data.range(of: Data("\r\n\r\n".utf8)) else { return .incomplete }
+        guard let head = String(data: data[..<headerEnd.lowerBound], encoding: .utf8)
+        else { return .invalid }
         let lines = head.components(separatedBy: "\r\n")
         let parts = lines[0].components(separatedBy: " ")
-        guard parts.count >= 2 else { return nil }
+        guard parts.count >= 2 else { return .invalid }
         var contentLength = 0
         for line in lines.dropFirst() {
             let pair = line.split(separator: ":", maxSplits: 1)
             if pair.count == 2, pair[0].lowercased() == "content-length" {
-                contentLength = Int(pair[1].trimmingCharacters(in: .whitespaces)) ?? 0
+                guard let length = Int(pair[1].trimmingCharacters(in: .whitespaces)),
+                      (0...maxRequestBytes).contains(length)
+                else { return .invalid }
+                contentLength = length
             }
         }
         let bodyStart = headerEnd.upperBound
-        guard data.count - bodyStart >= contentLength else { return nil }
-        return Request(
+        guard data.count - bodyStart >= contentLength else { return .incomplete }
+        return .complete(Request(
             method: parts[0], path: parts[1],
-            body: data.subdata(in: bodyStart..<(bodyStart + contentLength)))
+            body: data.subdata(in: bodyStart..<(bodyStart + contentLength))))
     }
 
     private static func writeResponse(_ fd: Int32, status: Int, body: String) {
@@ -229,20 +242,27 @@ private func errnoString() -> String {
 
 /// Parent-process walk via sysctl(KERN_PROC_PID).
 enum ProcessAncestry {
-    static func parent(of pid: pid_t) -> pid_t? {
+    /// sysctl(KERN_PROC_PID) works for every process, including root-owned
+    /// ones like /usr/bin/login (proc_name() fails for those).
+    private static func info(of pid: pid_t) -> kinfo_proc? {
         var info = kinfo_proc()
         var size = MemoryLayout<kinfo_proc>.stride
         var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
         guard sysctl(&mib, u_int(mib.count), &info, &size, nil, 0) == 0, size > 0 else {
             return nil
         }
-        return info.kp_eproc.e_ppid
+        return info
+    }
+
+    static func parent(of pid: pid_t) -> pid_t? {
+        info(of: pid)?.kp_eproc.e_ppid
     }
 
     static func name(of pid: pid_t) -> String? {
-        var buffer = [CChar](repeating: 0, count: 256)
-        guard proc_name(pid, &buffer, UInt32(buffer.count)) > 0 else { return nil }
-        return String(cString: buffer)
+        guard var info = info(of: pid) else { return nil }
+        return withUnsafeBytes(of: &info.kp_proc.p_comm) { raw in
+            String(decoding: raw.prefix { $0 != 0 }, as: UTF8.self)
+        }
     }
 
     /// Whether a pty's foreground process group is a program the tab's
@@ -254,9 +274,9 @@ enum ProcessAncestry {
         var current = leader
         for _ in 0..<64 {
             if current == app { return hops >= 2 }
-            guard current > 1, let parent = parent(of: current), parent != current else {
-                return false
-            }
+            guard current > 1, let process = info(of: current) else { return false }
+            let parent = process.kp_eproc.e_ppid
+            guard parent != current else { return false }
             if name(of: current) != "login" { hops += 1 }
             current = parent
         }
